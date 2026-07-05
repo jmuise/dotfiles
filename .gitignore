@@ -1,0 +1,14 @@
+# Machine-local overrides — never commit these
+*.local
+.gitconfig.local
+
+# SSH — only config.example is tracked
+ssh/config
+ssh/sockets/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp

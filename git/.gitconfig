@@ -1,0 +1,76 @@
+[include]
+	path = ~/.gitconfig.local
+
+[core]
+	excludesfile = ~/.gitignore_global
+	editor       = code --wait
+	autocrlf     = input
+	pager        = delta
+
+[init]
+	defaultBranch = main
+
+[pull]
+	rebase = true
+
+[push]
+	autoSetupRemote = true
+	default         = current
+
+[rebase]
+	autoStash = true
+
+[merge]
+	conflictstyle = zdiff3
+
+[diff]
+	algorithm     = histogram
+	colorMoved    = default
+
+[delta]
+	navigate    = true
+	line-numbers = true
+	side-by-side = false
+	dark        = true
+
+[fetch]
+	prune     = true
+	pruneTags = true
+
+[tag]
+	sort = version:refname
+
+[log]
+	date = iso
+
+[alias]
+	# status / log
+	s    = status -sb
+	l    = log --oneline --graph --decorate -20
+	la   = log --oneline --graph --decorate --all -30
+	last = log -1 HEAD --stat
+
+	# branching
+	co   = checkout
+	cob  = checkout -b
+	br   = branch -vv
+	brd  = branch -d
+	brD  = branch -D
+
+	# committing
+	a    = add
+	aa   = add --all
+	c    = commit -m
+	ca   = commit --amend --no-edit
+	can  = commit --amend
+
+	# stash
+	ss   = stash push -m
+	sl   = stash list
+	sp   = stash pop
+
+	# utility
+	undo = reset HEAD~1 --mixed
+	unstage = reset HEAD --
+	cleanup = "!git branch --merged | grep -v '\\*\\|main\\|master\\|develop' | xargs -r git branch -d"
+	whoami  = "!git config user.name && git config user.email"

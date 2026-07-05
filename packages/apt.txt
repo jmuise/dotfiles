@@ -1,0 +1,27 @@
+# apt packages — Ubuntu/Debian
+# Install: xargs sudo apt-get install -y < packages/apt.txt
+# (One package per line; lines starting with # are stripped by xargs)
+
+# Shell
+zsh
+bash
+tmux
+
+# Modern CLI
+bat
+ripgrep
+fd-find
+fzf
+jq
+
+# Dev
+git
+curl
+wget
+build-essential
+direnv
+unzip
+
+# Containers
+docker.io
+docker-compose-v2

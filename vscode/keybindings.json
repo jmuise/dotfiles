@@ -1,0 +1,32 @@
+[
+  // Terminal
+  { "key": "ctrl+`",            "command": "workbench.action.terminal.toggleTerminal" },
+  { "key": "ctrl+shift+`",      "command": "workbench.action.terminal.new" },
+
+  // Navigation
+  { "key": "alt+left",          "command": "workbench.action.navigateBack" },
+  { "key": "alt+right",         "command": "workbench.action.navigateForward" },
+
+  // Editor tabs
+  { "key": "ctrl+shift+[",      "command": "workbench.action.previousEditor" },
+  { "key": "ctrl+shift+]",      "command": "workbench.action.nextEditor" },
+
+  // Move lines without selecting first
+  { "key": "alt+up",            "command": "editor.action.moveLinesUpAction",   "when": "editorTextFocus" },
+  { "key": "alt+down",          "command": "editor.action.moveLinesDownAction", "when": "editorTextFocus" },
+
+  // Duplicate line
+  { "key": "shift+alt+down",    "command": "editor.action.copyLinesDownAction", "when": "editorTextFocus" },
+
+  // Delete line
+  { "key": "ctrl+shift+k",      "command": "editor.action.deleteLines",         "when": "editorTextFocus" },
+
+  // Format document
+  { "key": "shift+alt+f",       "command": "editor.action.formatDocument",      "when": "editorTextFocus" },
+
+  // Quick fix
+  { "key": "ctrl+.",            "command": "editor.action.quickFix",            "when": "editorHasCodeActionsProvider && editorTextFocus" },
+
+  // Close other editors
+  { "key": "ctrl+k ctrl+o",     "command": "workbench.action.closeOtherEditors" }
+]

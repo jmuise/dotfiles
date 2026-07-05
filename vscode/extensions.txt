@@ -1,0 +1,53 @@
+# VS Code extensions — install with:
+# cat extensions.txt | grep -v '^#' | grep -v '^$' | xargs -L1 code --install-extension
+
+# Themes
+GitHub.github-vscode-theme
+PKief.material-icon-theme
+
+# Editor
+esbenp.prettier-vscode
+editorconfig.editorconfig
+streetsidesoftware.code-spell-checker
+usernamehw.errorlens
+
+# Git
+eamodio.gitlens
+mhutchie.git-graph
+
+# Dev containers & remote
+ms-vscode-remote.remote-containers
+ms-vscode-remote.remote-ssh
+ms-vscode-remote.remote-wsl
+
+# Docker
+ms-azuretools.vscode-docker
+
+# Languages
+ms-python.python
+ms-python.black-formatter
+ms-python.isort
+golang.go
+rust-lang.rust-analyzer
+ms-vscode.cpptools
+redhat.java
+
+# Web
+dbaeumer.vscode-eslint
+bradlc.vscode-tailwindcss
+
+# Markdown / docs
+yzhang.markdown-all-in-one
+davidanson.vscode-markdownlint
+bierner.markdown-preview-github-styles
+
+# YAML / TOML / JSON
+redhat.vscode-yaml
+tamasfe.even-better-toml
+
+# REST / HTTP
+humao.rest-client
+
+# AI
+github.copilot
+github.copilot-chat

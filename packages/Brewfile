@@ -1,0 +1,53 @@
+# Brewfile — macOS packages
+# Install: brew bundle --file=packages/Brewfile
+# Update this after installing something: brew bundle dump --force --file=packages/Brewfile
+
+tap "homebrew/cask-fonts"
+
+# ── shell & terminal ──────────────────────────────────────────────────────────
+brew "zsh"
+brew "bash"
+brew "starship"
+brew "tmux"
+
+# ── modern CLI replacements ───────────────────────────────────────────────────
+brew "eza"          # better ls
+brew "bat"          # better cat
+brew "ripgrep"      # better grep
+brew "fd"           # better find
+brew "fzf"          # fuzzy finder
+brew "delta"        # better git diff
+brew "jq"           # JSON processor
+brew "yq"           # YAML processor
+brew "zoxide"       # smarter cd
+
+# ── git ───────────────────────────────────────────────────────────────────────
+brew "git"
+brew "gh"           # GitHub CLI
+brew "lazygit"      # TUI git client
+
+# ── dev tools ─────────────────────────────────────────────────────────────────
+brew "curl"
+brew "wget"
+brew "httpie"       # curl-friendly HTTP client
+brew "mkcert"       # local dev certs
+brew "direnv"       # per-directory env vars
+
+# ── containers ────────────────────────────────────────────────────────────────
+brew "docker"
+brew "docker-compose"
+
+# ── runtimes (managed separately, but handy to have) ─────────────────────────
+brew "node"
+brew "python"
+brew "go"
+
+# ── fonts ─────────────────────────────────────────────────────────────────────
+cask "font-cascadia-code-nf"
+cask "font-meslo-lg-nerd-font"
+
+# ── macOS apps ────────────────────────────────────────────────────────────────
+cask "visual-studio-code"
+cask "iterm2"
+cask "raycast"
+cask "rectangle"

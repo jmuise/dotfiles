@@ -1,0 +1,32 @@
+# winget packages — Windows
+# Install: Get-Content packages\winget.txt | Where-Object { $_ -notmatch '^#|^\s*$' } | ForEach-Object { winget install --id $_ -e --silent }
+
+# Shell & terminal
+Microsoft.WindowsTerminal
+Microsoft.PowerShell
+
+# Git
+Git.Git
+GitHub.GitHubDesktop
+GitHub.cli
+
+# Modern CLI (via scoop or winget where available)
+junegunn.fzf
+BurntSushi.ripgrep.MSVC
+sharkdp.bat
+sharkdp.fd
+jqlang.jq
+
+# Editor
+Microsoft.VisualStudioCode
+
+# Runtimes
+OpenJS.NodeJS.LTS
+Python.Python.3.12
+GoLang.Go
+
+# Containers
+Docker.DockerDesktop
+
+# Fonts
+DEVCOM.JetBrainsMonoNerdFont
