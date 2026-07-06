@@ -16,6 +16,7 @@ BurntSushi.ripgrep.MSVC
 sharkdp.bat
 sharkdp.fd
 jqlang.jq
+dandavison.delta
 
 # Editor
 Microsoft.VisualStudioCode
