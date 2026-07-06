@@ -1,4 +1,4 @@
-# PowerShell profile — loaded for every interactive session
+﻿# PowerShell profile — loaded for every interactive session
 # Linked to $PROFILE by install.ps1
 
 # ── imports & modules ─────────────────────────────────────────────────────────

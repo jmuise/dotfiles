@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # install.ps1 — dotfiles installer for Windows (PowerShell)
 #
 # Run from an elevated PowerShell prompt, or enable Developer Mode in
@@ -13,6 +13,28 @@ param([switch]$DryRun)
 
 $ErrorActionPreference = "Stop"
 $DOTFILES = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# This repo's profile targets PowerShell 7+. Windows PowerShell 5.1 (built
+# into every Windows install) can't run it, so hand off to pwsh instead of
+# silently half-working. Installs pwsh via winget if it isn't present yet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+  $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+  if (-not $pwsh) {
+    Write-Host "PowerShell 7 not found — installing via winget..." -ForegroundColor Blue
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      winget install --id Microsoft.PowerShell -e --silent
+      $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    }
+  }
+  if ($pwsh) {
+    $reArgs = @()
+    if ($DryRun) { $reArgs += "-DryRun" }
+    & $pwsh.Source -NoLogo -NoProfile -File $PSCommandPath @reArgs
+    exit $LASTEXITCODE
+  }
+  Write-Host "Could not install PowerShell 7 automatically. Install it manually (winget install --id Microsoft.PowerShell -e) and re-run this script." -ForegroundColor Red
+  exit 1
+}
 
 function log     { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
 function success { param($m) Write-Host "✔ $m" -ForegroundColor Green }
@@ -59,10 +81,41 @@ log "Shell..."
 New-Link "$DOTFILES\shell\aliases.sh"  "$HOME\.aliases"
 New-Link "$DOTFILES\shell\exports.sh"  "$HOME\.exports"
 
-# PowerShell profile
+# PowerShell profile — linked for pwsh (the real profile) and for Windows
+# PowerShell 5.1 (a shim that hands off to pwsh), so either shortcut lands
+# in the same place.
 log "PowerShell profile..."
-$psProfileDir = Split-Path -Parent $PROFILE
 New-Link "$DOTFILES\powershell\profile.ps1" $PROFILE
+
+$profileFileName = Split-Path -Leaf $PROFILE
+$docsDir = Split-Path -Parent (Split-Path -Parent $PROFILE)
+$legacyProfile = Join-Path $docsDir "WindowsPowerShell\$profileFileName"
+New-Link "$DOTFILES\powershell\profile.legacy.ps1" $legacyProfile
+
+# cmd.exe — doskey macros + prompt via AutoRun, so cmd matches PowerShell/bash
+log "cmd.exe..."
+if (-not $DryRun) {
+  [Environment]::SetEnvironmentVariable("DOTFILES_DIR", $DOTFILES, "User")
+}
+$cmdInit = "$DOTFILES\cmd\init.cmd"
+$autoRunKey = "HKCU:\Software\Microsoft\Command Processor"
+$autoRunEntry = "call `"$cmdInit`""
+$existingAutoRun = (Get-ItemProperty -Path $autoRunKey -Name AutoRun -ErrorAction SilentlyContinue).AutoRun
+if ($existingAutoRun -and $existingAutoRun -notmatch [regex]::Escape($cmdInit)) {
+  warn "Existing cmd.exe AutoRun found — appending dotfiles init rather than overwriting"
+  $newAutoRun = "$existingAutoRun & $autoRunEntry"
+} elseif ($existingAutoRun) {
+  $newAutoRun = $existingAutoRun
+} else {
+  $newAutoRun = $autoRunEntry
+}
+if ($DryRun) {
+  Write-Host "  AutoRun: $newAutoRun"
+} else {
+  if (-not (Test-Path $autoRunKey)) { New-Item -Path $autoRunKey -Force | Out-Null }
+  New-ItemProperty -Path $autoRunKey -Name AutoRun -Value $newAutoRun -PropertyType String -Force | Out-Null
+  success "cmd.exe AutoRun configured"
+}
 
 # VS Code
 log "VS Code..."

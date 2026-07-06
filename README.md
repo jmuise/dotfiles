@@ -8,7 +8,8 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 |------|-------------------|
 | `git/` | `.gitconfig` with aliases, delta diff, sane push/pull defaults |
 | `shell/` | `.zshrc`, `.bashrc`, shared `aliases.sh` and `exports.sh` |
-| `powershell/` | PowerShell profile with PSReadLine and posh-git |
+| `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git) + a Windows PowerShell 5.1 shim that hands off to pwsh |
+| `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
@@ -21,7 +22,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/jeremymuise/dotfiles ~/dotfiles
+git clone https://github.com/jmuise/dotfiles ~/dotfiles
 cd ~/dotfiles
 ./install.sh
 ```
@@ -35,10 +36,15 @@ Preview what will be symlinked first:
 ### Windows (PowerShell — run as admin, or with Developer Mode enabled)
 
 ```powershell
-git clone https://github.com/jeremymuise/dotfiles $HOME\dotfiles
+git clone https://github.com/jmuise/dotfiles $HOME\dotfiles
 cd $HOME\dotfiles
 .\install.ps1
 ```
+
+The profile targets PowerShell 7+. If you run `install.ps1` from the
+built-in Windows PowerShell 5.1, it installs PowerShell 7 via winget (if
+missing) and re-launches itself under it automatically — no need to install
+pwsh yourself first.
 
 ### Packages
 
@@ -62,12 +68,30 @@ VS Code will automatically clone this repo and run `install.sh` inside every dev
 **Enable it once in VS Code settings:**
 
 ```json
-"dotfiles.repository": "https://github.com/jeremymuise/dotfiles",
+"dotfiles.repository": "https://github.com/jmuise/dotfiles",
 "dotfiles.targetPath": "~/dotfiles",
 "dotfiles.installCommand": "~/dotfiles/install.sh"
 ```
 
 These are already set in `vscode/settings.json`. The install script detects the container context (`/.dockerenv`, `$REMOTE_CONTAINERS`, `$CODESPACES`) and skips host-only steps like VS Code settings and macOS defaults. It will attempt to install starship if it's missing from the base image.
+
+## cmd.exe
+
+`install.ps1` sets `HKCU\Software\Microsoft\Command Processor\AutoRun` to run
+`cmd\init.cmd` at the start of every new cmd session (existing AutoRun entries
+are preserved and chained, not overwritten). `init.cmd` defines doskey macros
+for the same git/nav/docker aliases as `shell/aliases.sh` and
+`powershell/profile.ps1`, and switches `ls`/`ll`/`cat`/`grep` to eza/bat/rg
+when those are installed.
+
+cmd has no scripting hook for a starship-style dynamic prompt — `init.cmd`
+just colors the path so it isn't jarring next to the other shells. For a real
+shared prompt in cmd, install [Clink](https://chrisant996.github.io/clink/)
+(`winget install chrisant996.Clink`) and point it at a `starship init cmd`
+script; Clink gives cmd the same shell-integration hooks bash/zsh/PowerShell
+already have.
+
+AutoRun is skipped if cmd is started with `cmd /D`.
 
 ## Machine-specific config
 
@@ -100,7 +124,10 @@ dotfiles/
 │   ├── aliases.sh      ← sourced by both bash + zsh
 │   └── exports.sh      ← sourced by both bash + zsh
 ├── powershell/
-│   └── profile.ps1
+│   ├── profile.ps1        ← pwsh 7+ profile
+│   └── profile.legacy.ps1 ← Windows PowerShell 5.1 shim, hands off to pwsh
+├── cmd/
+│   └── init.cmd
 ├── vscode/
 │   ├── settings.json
 │   ├── keybindings.json
