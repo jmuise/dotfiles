@@ -14,7 +14,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.example` template (no keys) |
-| `packages/` | `Brewfile`, `apt.txt`, `winget.txt` |
+| `packages/` | `Brewfile`, `apt.txt`, `winget.txt` + a versioned lockfile/update-review workflow for winget |
 | `macos/` | Sensible `defaults write` settings |
 
 ## Install
@@ -60,6 +60,24 @@ Get-Content packages\winget.txt |
   Where-Object { $_ -notmatch '^#|^\s*$' } |
   ForEach-Object { winget install --id $_ -e --silent }
 ```
+
+#### Windows package version tracking
+
+`packages/winget.txt` is a hand-curated list of package IDs (not a dump of
+everything installed on the machine — `winget export` includes OS components
+and unrelated software, so it's a poor source of truth here). Versions are
+tracked separately in `packages/winget.lock.json`, a small lockfile pinning
+exactly what's installed:
+
+| Script | Purpose |
+|--------|---------|
+| `packages/winget-lock.ps1` | Regenerate the lock file from currently-installed versions. Run after editing `winget.txt`. |
+| `packages/winget-check-updates.ps1` | Checks for newer versions and, if found, commits an updated lock file to a `winget-updates` branch — never touches your working tree or checked-out branch. Registered as a weekly Windows Task Scheduler job (`dotfiles-winget-check-updates`) by `install.ps1`. |
+| `packages/winget-apply.ps1` | Installs/upgrades packages to match the pinned versions in the lock file. Run after reviewing and merging `winget-updates`. |
+
+Review proposed updates with `git log winget-updates -p`, and accept them
+with `git merge winget-updates` followed by `packages/winget-apply.ps1` —
+a local, dependabot-style update loop without needing a GitHub remote.
 
 ## Devcontainers
 
@@ -141,7 +159,11 @@ dotfiles/
 ├── packages/
 │   ├── Brewfile
 │   ├── apt.txt
-│   └── winget.txt
+│   ├── winget.txt
+│   ├── winget.lock.json         ← pinned installed versions
+│   ├── winget-lock.ps1          ← regenerate the lock file
+│   ├── winget-check-updates.ps1 ← weekly scheduled update check
+│   └── winget-apply.ps1         ← sync machine to the lock file
 └── macos/
     └── defaults.sh
 ```

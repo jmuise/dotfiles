@@ -117,6 +117,27 @@ if ($DryRun) {
   success "cmd.exe AutoRun configured"
 }
 
+# Scheduled winget update check — proposes version bumps as commits on a
+# `winget-updates` branch for review, weekly. See packages/winget-check-updates.ps1.
+log "Scheduled winget update check..."
+$wingetTaskName = "dotfiles-winget-check-updates"
+$wingetTaskAction = "pwsh.exe"
+$wingetTaskArgs = "-NoLogo -NoProfile -File `"$DOTFILES\packages\winget-check-updates.ps1`""
+if ($DryRun) {
+  Write-Host "  schedule: $wingetTaskName (weekly, Mon 9am) -> $wingetTaskAction $wingetTaskArgs"
+} else {
+  $action = New-ScheduledTaskAction -Execute $wingetTaskAction -Argument $wingetTaskArgs
+  $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At "09:00"
+  $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
+  if (Get-ScheduledTask -TaskName $wingetTaskName -ErrorAction SilentlyContinue) {
+    Set-ScheduledTask -TaskName $wingetTaskName -Action $action -Trigger $trigger -Settings $settings | Out-Null
+  } else {
+    Register-ScheduledTask -TaskName $wingetTaskName -Action $action -Trigger $trigger -Settings $settings `
+      -Description "Checks packages/winget.txt for available updates and proposes them as a commit on winget-updates for review." | Out-Null
+  }
+  success "Scheduled weekly winget update check ($wingetTaskName)"
+}
+
 # VS Code
 log "VS Code..."
 $vsDir = "$env:APPDATA\Code\User"
