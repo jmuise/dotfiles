@@ -1,0 +1,5 @@
+#!/bin/sh
+# $3 = 1 for a branch/ref checkout, 0 for a single-file checkout — only the
+# former can change which dotfiles are tracked, so skip the latter.
+[ "$3" = "1" ] || exit 0
+exec "$(dirname "$0")/_dispatch.sh"

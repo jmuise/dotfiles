@@ -37,6 +37,25 @@ link() {
   success "linked $dst"
 }
 
+# Like link, but writes rendered content instead of symlinking to the repo —
+# used where the target must be a real, self-contained file (see the git
+# config section below for why).
+render() {
+  local content="$1" dst="$2" marker="$3"
+  local dst_dir; dst_dir="$(dirname "$dst")"
+  if [[ "$DRY_RUN" == true ]]; then
+    printf '  render: → %s\n' "$dst"; return
+  fi
+  mkdir -p "$dst_dir"
+  if [[ -L "$dst" ]]; then
+    rm "$dst"
+  elif [[ -e "$dst" ]] && [[ "$(head -c "${#marker}" "$dst" 2>/dev/null)" != "$marker" ]]; then
+    warn "Backing up $dst → $dst.bak"; mv "$dst" "$dst.bak"
+  fi
+  printf '%s' "$content" > "$dst"
+  success "rendered $dst"
+}
+
 # ── context detection ─────────────────────────────────────────────────────────
 is_devcontainer() {
   [[ -n "${REMOTE_CONTAINERS:-}" ]] || [[ -n "${CODESPACES:-}" ]] \
@@ -60,9 +79,14 @@ is_devcontainer && log "Context: devcontainer"
 is_macos && log "Context: macOS"
 is_linux && log "Context: Linux"
 
-# git
+# git — ~/.gitconfig is rendered (template + local identity merged into one
+# file), not symlinked. VS Code's Dev Containers "copy git config" feature
+# copies the raw ~/.gitconfig into every devcontainer automatically, but does
+# not follow `include.path` (github.com/microsoft/vscode-remote-release/
+# issues/9469) — so a template that includes ~/.gitconfig.local would need a
+# manual bind-mount added to every single devcontainer project to get your
+# identity across. A self-contained rendered file works everywhere for free.
 log "Git..."
-link "$DOTFILES_DIR/git/.gitconfig"        "$HOME/.gitconfig"
 link "$DOTFILES_DIR/git/.gitignore_global" "$HOME/.gitignore_global"
 
 if [[ ! -f "$HOME/.gitconfig.local" ]]; then
@@ -72,7 +96,31 @@ if [[ ! -f "$HOME/.gitconfig.local" ]]; then
 	name  = Your Name
 	email = you@example.com
 EOF
-  warn "Created ~/.gitconfig.local — fill in your name and email"
+  warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.sh"
+fi
+
+gitconfig_marker="# Managed by dotfiles install.sh — do not edit directly.
+# Edit git/.gitconfig.template or ~/.gitconfig.local, then re-run install.sh.
+
+"
+gitconfig_local_content=""
+[[ -f "$HOME/.gitconfig.local" ]] && gitconfig_local_content="$(cat "$HOME/.gitconfig.local")"
+gitconfig_rendered="${gitconfig_marker}$(cat "$DOTFILES_DIR/git/.gitconfig.template")
+${gitconfig_local_content}"
+render "$gitconfig_rendered" "$HOME/.gitconfig" "$gitconfig_marker"
+
+# git hooks — points this checkout at the repo-tracked hooks/ dir so
+# post-checkout/post-merge/post-rewrite re-run this installer automatically
+# whenever git pull/rebase/checkout change dotfiles files. Runs after the
+# ~/.gitconfig render above so a mid-migration broken global config (e.g. a
+# dangling symlink) can't make this git config call itself fail.
+log "Git hooks..."
+if $DRY_RUN; then
+  printf '  git config core.hooksPath hooks\n'
+else
+  git -C "$DOTFILES_DIR" config core.hooksPath hooks
+  chmod +x "$DOTFILES_DIR"/hooks/* 2>/dev/null || true
+  success "core.hooksPath -> hooks"
 fi
 
 # shell
@@ -121,6 +169,11 @@ if is_devcontainer; then
     log "Installing starship in container..."
     curl -fsSL https://starship.rs/install.sh | sh -s -- --yes 2>/dev/null \
       || warn "starship install skipped (no curl or offline)"
+  fi
+  if ! command -v claude &>/dev/null && ! $DRY_RUN; then
+    log "Installing Claude Code in container..."
+    curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null \
+      || warn "Claude Code install skipped (no curl or offline)"
   fi
 fi
 

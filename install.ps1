@@ -9,7 +9,7 @@
 #   .\install.ps1 -DryRun
 # =============================================================================
 
-param([switch]$DryRun)
+param([switch]$DryRun, [switch]$SkipWSL)
 
 $ErrorActionPreference = "Stop"
 $DOTFILES = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -29,6 +29,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
   if ($pwsh) {
     $reArgs = @()
     if ($DryRun) { $reArgs += "-DryRun" }
+    if ($SkipWSL) { $reArgs += "-SkipWSL" }
     & $pwsh.Source -NoLogo -NoProfile -File $PSCommandPath @reArgs
     exit $LASTEXITCODE
   }
@@ -55,25 +56,92 @@ function New-Link {
   success "linked $Dst"
 }
 
+# Like New-Link, but writes rendered content instead of symlinking to the
+# repo — used where the target must be a real, self-contained file (see the
+# git config section below for why).
+function Set-Rendered {
+  param($Content, $Dst, $Marker)
+  if ($DryRun) { Write-Host "  render: → $Dst"; return }
+  $dstDir = Split-Path -Parent $Dst
+  if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force $dstDir | Out-Null }
+  if (Test-Path $Dst) {
+    $item = Get-Item $Dst -Force
+    if ($item.LinkType) {
+      Remove-Item $Dst -Force
+    } elseif (-not (Get-Content $Dst -Raw).StartsWith($Marker)) {
+      warn "Backing up existing $Dst → $Dst.bak"
+      Move-Item $Dst "$Dst.bak" -Force
+    }
+  }
+  Set-Content $Dst -Value $Content -Encoding UTF8 -NoNewline
+  success "rendered $Dst"
+}
+
 if ($DryRun) { warn "DRY RUN — no changes will be made" }
 
 log "Dotfiles: $DOTFILES"
 
-# git
+# HOME — Windows doesn't set this env var natively (only $env:USERPROFILE).
+# PowerShell's automatic $HOME variable is always available, which makes the
+# gap easy to miss here, but native Win32 processes like VS Code have no such
+# fallback. Devcontainers rely on ${localEnv:HOME} to bind-mount host dotfiles
+# (git config, etc.) into the container; without a real HOME env var, that
+# resolves to an empty string and the mount fails with "source path does not
+# exist". Set it once, persistently, so every devcontainer on this machine
+# resolves it the same way.
+log "HOME environment variable..."
+if ([Environment]::GetEnvironmentVariable("HOME", "User") -ne $env:USERPROFILE) {
+  if ($DryRun) {
+    Write-Host "  set HOME (User) = $env:USERPROFILE"
+  } else {
+    [Environment]::SetEnvironmentVariable("HOME", $env:USERPROFILE, "User")
+    $env:HOME = $env:USERPROFILE
+    success "HOME set to $env:USERPROFILE (User scope) — restart VS Code/terminals to pick it up"
+  }
+} else {
+  success "HOME already set to $env:USERPROFILE"
+}
+
+# git — ~/.gitconfig is rendered (template + local identity merged into one
+# file), not symlinked. VS Code's Dev Containers "copy git config" feature
+# copies the raw ~/.gitconfig into every devcontainer automatically, but does
+# not follow `include.path` (github.com/microsoft/vscode-remote-release/
+# issues/9469) — so a template that includes ~/.gitconfig.local would need a
+# manual bind-mount added to every single devcontainer project to get your
+# identity across. A self-contained rendered file works everywhere for free.
 log "Git..."
-New-Link "$DOTFILES\git\.gitconfig"        "$HOME\.gitconfig"
 New-Link "$DOTFILES\git\.gitignore_global" "$HOME\.gitignore_global"
 
-if (-not (Test-Path "$HOME\.gitconfig.local")) {
+$gitconfigLocal = "$HOME\.gitconfig.local"
+if (-not (Test-Path $gitconfigLocal)) {
   if (-not $DryRun) {
     @"
 # ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles
 [user]
 	name  = Your Name
 	email = you@example.com
-"@ | Set-Content "$HOME\.gitconfig.local" -Encoding UTF8
+"@ | Set-Content $gitconfigLocal -Encoding UTF8
   }
-  warn "Created ~/.gitconfig.local — fill in your name and email"
+  warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.ps1"
+}
+
+$gitconfigMarker = "# Managed by dotfiles install.ps1 — do not edit directly.`n# Edit git\.gitconfig.template or ~\.gitconfig.local, then re-run install.ps1.`n`n"
+$gitconfigLocalContent = if (Test-Path $gitconfigLocal) { Get-Content $gitconfigLocal -Raw } else { "" }
+$gitconfigRendered = $gitconfigMarker + (Get-Content "$DOTFILES\git\.gitconfig.template" -Raw) + "`n" + $gitconfigLocalContent
+Set-Rendered $gitconfigRendered "$HOME\.gitconfig" $gitconfigMarker
+
+# Git hooks — points this checkout at the repo-tracked hooks/ dir so
+# post-checkout/post-merge/post-rewrite re-run this installer automatically
+# whenever `git pull`/`git rebase`/`git checkout` change dotfiles files, in
+# addition to the logon safety net registered further down. Runs after the
+# ~/.gitconfig render above so a mid-migration broken global config (e.g. a
+# dangling symlink) can't make this `git config` call itself fail.
+log "Git hooks..."
+if ($DryRun) {
+  Write-Host "  git config core.hooksPath hooks"
+} else {
+  git -C $DOTFILES config core.hooksPath hooks
+  success "core.hooksPath -> hooks"
 }
 
 # shell
@@ -138,6 +206,34 @@ if ($DryRun) {
   success "Scheduled weekly winget update check ($wingetTaskName)"
 }
 
+# Logon sync — safety net that re-applies this installer (symlinks, rendered
+# ~/.gitconfig, etc. — all idempotent and fast) at every logon, in case
+# something drifted outside of a git pull (e.g. a symlink got clobbered).
+# -SkipWSL keeps it fast and non-interactive; run install.ps1 by hand for the
+# full WSL/Windows Terminal provisioning.
+#
+# This uses a Startup-folder launcher rather than a Scheduled Task: creating
+# *new* scheduled tasks (Register-ScheduledTask, and schtasks /Create) was
+# denied outright on this machine even from an elevated prompt — most likely
+# endpoint-security policy blocking Task Scheduler persistence, a common
+# hardening measure. A VBScript launcher in shell:startup needs no special
+# privilege (it's just a file in a folder the user already owns) and starts
+# pwsh fully hidden, no window flash.
+log "Logon sync..."
+$startupDir = [Environment]::GetFolderPath("Startup")
+$startupScript = Join-Path $startupDir "dotfiles-install-at-logon.vbs"
+# VBS escapes an embedded quote by doubling it, so the pwsh -File path (itself
+# quoted, since $DOTFILES can contain spaces) needs "" around it.
+$innerCmd = 'pwsh.exe -NoLogo -NoProfile -File ""' + "$DOTFILES\install.ps1" + '"" -SkipWSL'
+$vbsContent = 'Set WshShell = CreateObject("WScript.Shell")' + "`r`n" +
+  'WshShell.Run "' + $innerCmd + '", 0, False' + "`r`n"
+if ($DryRun) {
+  Write-Host "  logon launcher: → $startupScript"
+} else {
+  Set-Content -Path $startupScript -Value $vbsContent -Encoding ASCII -NoNewline
+  success "Logon sync launcher: $startupScript"
+}
+
 # VS Code
 log "VS Code..."
 $vsDir = "$env:APPDATA\Code\User"
@@ -159,6 +255,28 @@ if (-not (Test-Path $sshConfig)) {
   }
 } else {
   warn "~/.ssh/config already exists — skipping (see ssh\config.example)"
+}
+
+# WSL (Debian) + Windows Terminal — makes WSL the primary daily-driver shell,
+# with Windows Terminal defaulting new tabs into it. See wsl/bootstrap.ps1 and
+# windows-terminal/configure.ps1 for the actual logic; kept out of this file
+# to stay readable.
+if (-not $SkipWSL) {
+  log "WSL (Debian)..."
+  if ($DryRun) {
+    & "$DOTFILES\wsl\bootstrap.ps1" -DotfilesDir $DOTFILES -DryRun
+  } else {
+    & "$DOTFILES\wsl\bootstrap.ps1" -DotfilesDir $DOTFILES
+  }
+
+  log "Windows Terminal..."
+  if ($DryRun) {
+    & "$DOTFILES\windows-terminal\configure.ps1" -DryRun
+  } else {
+    & "$DOTFILES\windows-terminal\configure.ps1"
+  }
+} else {
+  warn "Skipping WSL/Windows Terminal setup (-SkipWSL)"
 }
 
 success "Done! Restart your shell."

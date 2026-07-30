@@ -19,15 +19,15 @@
   "editor.formatOnPaste": false,
   "editor.codeActionsOnSave": {
     "source.fixAll": "explicit",
-    "source.organizeImports": "explicit"
+    "source.organizeImports": "explicit",
   },
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "editor.accessibilitySupport": "off",
   "editor.suggest.preview": true,
 
   // ── workbench ────────────────────────────────────────────────────────────────
-  "workbench.colorTheme": "GitHub Dark Default",
-  "workbench.iconTheme": "material-icon-theme",
+  "workbench.colorTheme": "Light 2026",
+  "workbench.iconTheme": "vs-seti",
   "workbench.startupEditor": "none",
   "workbench.editor.tabSizing": "shrink",
   "workbench.editor.wrapTabs": false,
@@ -57,11 +57,11 @@
     "**/.DS_Store": true,
     "**/node_modules": true,
     "**/__pycache__": true,
-    "**/.pytest_cache": true
+    "**/.pytest_cache": true,
   },
   "files.watcherExclude": {
     "**/.git/objects/**": true,
-    "**/node_modules/**": true
+    "**/node_modules/**": true,
   },
 
   // ── explorer ─────────────────────────────────────────────────────────────────
@@ -79,41 +79,44 @@
   "search.exclude": {
     "**/node_modules": true,
     "**/dist": true,
-    "**/.git": true
+    "**/.git": true,
   },
 
   // ── language overrides ───────────────────────────────────────────────────────
   "[markdown]": {
     "editor.wordWrap": "on",
-    "editor.formatOnSave": false
+    "editor.formatOnSave": false,
   },
   "[json]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[jsonc]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter",
-    "editor.tabSize": 4
+    "editor.tabSize": 4,
   },
   "[go]": {
     "editor.defaultFormatter": "golang.go",
     "editor.tabSize": 4,
-    "editor.insertSpaces": false
+    "editor.insertSpaces": false,
   },
   "[dockerfile]": {
-    "editor.formatOnSave": false
+    "editor.formatOnSave": false,
   },
 
   // ── extensions ───────────────────────────────────────────────────────────────
   "extensions.ignoreRecommendations": false,
 
   // ── devcontainers ────────────────────────────────────────────────────────────
-  "dotfiles.repository": "https://github.com/jeremymuise/dotfiles",
+  "dotfiles.repository": "https://github.com/jmuise/dotfiles",
   "dotfiles.targetPath": "~/dotfiles",
   "dotfiles.installCommand": "~/dotfiles/install.sh",
 
   // Remote: always install extensions in containers too
-  "remote.extensionKind": {}
+  "remote.extensionKind": {},
+  "claudeCode.preferredLocation": "panel",
+  "python.analysis.typeCheckingMode": "strict",
+  "dev.containers.mountWaylandSocket": false,
 }

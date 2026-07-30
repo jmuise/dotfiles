@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fires on rebase/amend/cherry-pick. Needed alongside post-merge because this
+# repo's own .gitconfig.template sets pull.rebase=true, so `git pull` here
+# rewrites commits (post-rewrite) rather than merging (post-merge).
+exec "$(dirname "$0")/_dispatch.sh"
