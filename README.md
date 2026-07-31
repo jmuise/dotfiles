@@ -87,7 +87,7 @@ a local, dependabot-style update loop without needing a GitHub remote.
 
 ## Devcontainers
 
-VS Code will automatically clone this repo and run `install.sh` inside every devcontainer you open, giving you your shell config, git aliases, starship prompt, and the Claude Code CLI everywhere.
+VS Code will automatically clone this repo and run `install.sh` inside every devcontainer you open, giving you your shell config, git aliases, starship prompt, the Claude Code CLI, the GitHub CLI (`gh`), and `delta` everywhere.
 
 **Enable it once in VS Code settings:**
 
@@ -97,7 +97,7 @@ VS Code will automatically clone this repo and run `install.sh` inside every dev
 "dotfiles.installCommand": "~/dotfiles/install.sh"
 ```
 
-These are already set in `vscode/settings.json`. The install script detects the container context (`/.dockerenv`, `$REMOTE_CONTAINERS`, `$CODESPACES`) and skips host-only steps like VS Code settings and macOS defaults. It will attempt to install starship and the Claude Code CLI if either is missing from the base image.
+These are already set in `vscode/settings.json`. The install script detects the container context (`/.dockerenv`, `$REMOTE_CONTAINERS`, `$CODESPACES`) and skips host-only steps like VS Code settings and macOS defaults. It will attempt to install starship, the Claude Code CLI, `gh`, and `delta` (via `apt-get`) for whichever of those are missing from the base image.
 
 Git identity comes along for free too: VS Code's Dev Containers "copy git config" feature copies your host `~/.gitconfig` into every container automatically, and since it's a single rendered file (see [Machine-specific config](#machine-specific-config)) rather than one that `include`s another, there's nothing project-specific to configure — no per-project bind mount needed. (Copy-git-config does *not* follow `include.path` — [microsoft/vscode-remote-release#9469](https://github.com/microsoft/vscode-remote-release/issues/9469) — which is what a split file would require.)
 

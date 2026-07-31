@@ -16,6 +16,8 @@ jq
 
 # Dev
 git
+gh
+git-delta
 curl
 wget
 build-essential

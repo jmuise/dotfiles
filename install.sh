@@ -175,6 +175,15 @@ if is_devcontainer; then
     curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null \
       || warn "Claude Code install skipped (no curl or offline)"
   fi
+  apt_missing=()
+  command -v gh &>/dev/null || apt_missing+=(gh)
+  command -v delta &>/dev/null || apt_missing+=(git-delta)
+  if [[ ${#apt_missing[@]} -gt 0 ]] && ! $DRY_RUN; then
+    log "Installing ${apt_missing[*]} in container..."
+    sudo apt-get update -qq \
+      && sudo apt-get install -y --no-install-recommends "${apt_missing[@]}" \
+      || warn "apt install skipped for: ${apt_missing[*]} (no sudo/network or offline)"
+  fi
 fi
 
 # macOS system defaults
