@@ -21,11 +21,6 @@ dandavison.delta
 # Editor
 Microsoft.VisualStudioCode
 
-# Runtimes
-OpenJS.NodeJS.LTS
-Python.Python.3.12
-GoLang.Go
-
 # Containers
 Docker.DockerDesktop
 

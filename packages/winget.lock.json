@@ -1,7 +1,19 @@
 [
   {
+    "id": "BurntSushi.ripgrep.MSVC",
+    "version": "15.2.0"
+  },
+  {
     "id": "dandavison.delta",
     "version": "0.19.2"
+  },
+  {
+    "id": "DEVCOM.JetBrainsMonoNerdFont",
+    "version": "3.3.0"
+  },
+  {
+    "id": "Docker.DockerDesktop",
+    "version": "4.84.0"
   },
   {
     "id": "Git.Git",
@@ -12,19 +24,35 @@
     "version": "2.93.0"
   },
   {
+    "id": "GitHub.GitHubDesktop",
+    "version": "3.6.3"
+  },
+  {
+    "id": "jqlang.jq",
+    "version": "1.8.2"
+  },
+  {
+    "id": "junegunn.fzf",
+    "version": "0.74.1"
+  },
+  {
     "id": "Microsoft.PowerShell",
-    "version": "7.6.1.0"
+    "version": "7.6.3.0"
   },
   {
     "id": "Microsoft.VisualStudioCode",
-    "version": "1.127.0"
+    "version": "1.131.0"
   },
   {
     "id": "Microsoft.WindowsTerminal",
-    "version": "1.24.11321.0"
+    "version": "1.24.11911.0"
   },
   {
-    "id": "Python.Python.3.12",
-    "version": "3.12.0"
+    "id": "sharkdp.bat",
+    "version": "0.26.1"
+  },
+  {
+    "id": "sharkdp.fd",
+    "version": "10.4.2"
   }
 ]

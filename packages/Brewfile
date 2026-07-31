@@ -37,11 +37,6 @@ brew "direnv"       # per-directory env vars
 brew "docker"
 brew "docker-compose"
 
-# ── runtimes (managed separately, but handy to have) ─────────────────────────
-brew "node"
-brew "python"
-brew "go"
-
 # ── fonts ─────────────────────────────────────────────────────────────────────
 cask "font-cascadia-code-nf"
 cask "font-meslo-lg-nerd-font"
