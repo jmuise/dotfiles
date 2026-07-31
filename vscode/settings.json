@@ -112,7 +112,7 @@
   // ── devcontainers ────────────────────────────────────────────────────────────
   "dotfiles.repository": "https://github.com/jmuise/dotfiles",
   "dotfiles.targetPath": "~/dotfiles",
-  "dotfiles.installCommand": "~/dotfiles/install.sh",
+  "dotfiles.installCommand": "install.sh",
 
   // Remote: always install extensions in containers too
   "remote.extensionKind": {},
