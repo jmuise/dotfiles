@@ -14,6 +14,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.example` template (no keys) |
+| `secrets/` | One-time setup scripts that seed `CLAUDE_CODE_OAUTH_TOKEN` (and reuse `gh`'s own session for `GH_TOKEN`) via your OS credential store — see [secrets/README.md](secrets/README.md) |
 | `packages/` | `Brewfile`, `apt.txt`, `winget.txt` + a versioned lockfile/update-review workflow for winget |
 | `macos/` | Sensible `defaults write` settings |
 | `wsl/` | Provisions WSL Debian as the primary Windows shell (apt packages, gitconfig migration, `install.sh`) |
@@ -101,6 +102,12 @@ These are already set in `vscode/settings.json`. The install script detects the 
 
 Git identity comes along for free too: VS Code's Dev Containers "copy git config" feature copies your host `~/.gitconfig` into every container automatically, and since it's a single rendered file (see [Machine-specific config](#machine-specific-config)) rather than one that `include`s another, there's nothing project-specific to configure — no per-project bind mount needed. (Copy-git-config does *not* follow `include.path` — [microsoft/vscode-remote-release#9469](https://github.com/microsoft/vscode-remote-release/issues/9469) — which is what a split file would require.)
 
+`install.sh` also runs `git/ensure-gcm.sh` inside the container if no
+`credential.helper` is already active — a backstop alongside VS Code's own
+git-credential forwarding, since the latter is only confirmed to work for
+real git hosts, not the synthetic host `secrets/` uses for the Claude Code
+token (see [secrets/README.md](secrets/README.md)).
+
 ## cmd.exe
 
 `install.ps1` sets `HKCU\Software\Microsoft\Command Processor\AutoRun` to run
@@ -148,6 +155,25 @@ fixed, repo-owned GUID (`wsl.exe -d Debian --cd ~`) and sets it as
 auto-generated WSL-distro profile, since that GUID is derived per-machine and
 isn't portable across machines. Everything else in your `settings.json`
 (color scheme, opacity, keybindings) is left untouched.
+
+## Secrets
+
+Git and `gh` already persist their own auth via your OS credential store /
+keyring — nothing to configure. Claude Code's token is the one gap
+(`claude setup-token` prints a token but doesn't persist it anywhere), so
+it's stored the same way via a synthetic git-credential host. Run once per
+machine:
+
+```bash
+./secrets/setup-claude-token.sh     # macOS / Linux / WSL / devcontainer
+```
+```powershell
+.\secrets\setup-claude-token.ps1    # native Windows
+```
+
+See [secrets/README.md](secrets/README.md) for the full mechanism, the WSL
+credential bridge `install.ps1` sets up automatically, and the
+`devcontainer.json` snippet for pulling tokens into project containers.
 
 ## Machine-specific config
 
@@ -212,7 +238,8 @@ dotfiles/
 ├── .gitattributes      ← forces LF line endings, even on a fresh Windows clone
 ├── git/
 │   ├── .gitconfig.template  ← rendered (not symlinked) into ~/.gitconfig, see below
-│   └── .gitignore_global
+│   ├── .gitignore_global
+│   └── ensure-gcm.sh    ← installs a credential.helper on Linux/devcontainer if none exists, see secrets/README.md
 ├── hooks/                       ← core.hooksPath target, wired up by the installer
 │   ├── _dispatch.sh              ← shared logic: re-runs install.ps1/install.sh
 │   ├── post-checkout
@@ -240,6 +267,10 @@ dotfiles/
 │   └── .tmux.conf
 ├── ssh/
 │   └── config.example  ← template only, never symlinked
+├── secrets/
+│   ├── README.md
+│   ├── setup-claude-token.sh    ← one-time: stores Claude's token via GCM
+│   └── setup-claude-token.ps1   ← same, native Windows
 ├── packages/
 │   ├── Brewfile
 │   ├── apt.txt
@@ -251,7 +282,8 @@ dotfiles/
 ├── wsl/
 │   ├── bootstrap.ps1                      ← orchestrator: state detection, apt, migration, install.sh
 │   ├── detect-state.ps1                   ← WSL/Debian readiness-state detection
-│   └── migrate-gitconfig-credential.sh    ← preserves an existing git credential helper
+│   ├── migrate-gitconfig-credential.sh    ← preserves an existing git credential helper
+│   └── bridge-gcm.sh                      ← points WSL git at Windows' GCM, see secrets/README.md
 ├── windows-terminal/
 │   └── configure.ps1   ← points Windows Terminal's default profile at Debian WSL
 └── macos/
@@ -264,3 +296,7 @@ dotfiles/
 - `~/.gitconfig.local`, `~/.ssh/config`, and `*.local` files are in `.gitignore`
 - SSH config is copied (not symlinked) so you can add host entries without affecting the repo
 - `.gitignore_global` blocks common secret file patterns globally
+- Tool tokens (Claude Code, `gh`) are never written into this repo or any
+  dotfile — they live in your OS credential store / keyring, seeded by
+  `secrets/setup-claude-token.*` and `gh auth login`; see
+  [secrets/README.md](secrets/README.md)

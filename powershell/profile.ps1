@@ -59,6 +59,26 @@ if (Get-Command starship -ErrorAction SilentlyContinue) {
   Invoke-Expression (&starship init powershell)
 }
 
+# ── secrets ───────────────────────────────────────────────────────────────────
+# See secrets/README.md. Claude Code's token is stored via git-credential-
+# manager under a synthetic host (secrets/setup-claude-token.ps1); GH_TOKEN is
+# just reused from gh's own already-persisted session. Both are strictly
+# no-ops if unconfigured/unauthenticated - never blocks shell startup. The
+# sentinel-file check avoids GCM's multi-second network-probe-then-fail path
+# that a plain `git credential fill` against an unconfigured host triggers.
+$claudeTokenSentinel = Join-Path $env:LOCALAPPDATA "dotfiles\claude-token.configured"
+if (-not $env:CLAUDE_CODE_OAUTH_TOKEN -and (Test-Path $claudeTokenSentinel) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+  $credInput = "protocol=https`nhost=dotfiles-secrets.local`nusername=claude-code`n"
+  $credOutput = $credInput | git credential fill 2>$null
+  $passwordLine = $credOutput | Where-Object { $_ -like "password=*" } | Select-Object -First 1
+  if ($passwordLine) { $env:CLAUDE_CODE_OAUTH_TOKEN = $passwordLine.Substring(9) }
+}
+
+if (-not $env:GH_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)) {
+  $ghToken = gh auth token 2>$null
+  if ($ghToken) { $env:GH_TOKEN = $ghToken }
+}
+
 # ── local overrides ───────────────────────────────────────────────────────────
 $localProfile = Join-Path (Split-Path $PROFILE) "profile.local.ps1"
 if (Test-Path $localProfile) { . $localProfile }

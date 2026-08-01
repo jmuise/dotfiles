@@ -67,3 +67,29 @@ fi
 export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git'
 export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
 export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+
+# Secrets — see secrets/README.md. Claude Code's token is stored via
+# git-credential-manager under a synthetic host (secrets/setup-claude-token.sh);
+# GH_TOKEN is just reused from gh's own already-persisted session. Both are
+# strictly no-ops if unconfigured/unauthenticated - never blocks shell startup.
+#
+# The sentinel-file gate matters: git-credential-fill against an unconfigured
+# synthetic host isn't a fast local no-op - GCM tries (and fails) to network-
+# probe the host first, adding several real seconds to every new shell until
+# setup has run. The sentinel (created only by the setup script) skips that
+# path entirely pre-setup, and the `-z` check means post-setup cost is paid
+# once per login, not once per terminal tab (child shells inherit the export).
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] \
+   && [[ -f "$XDG_CACHE_HOME/dotfiles/claude-token.configured" ]] \
+   && command -v git &>/dev/null; then
+  _claude_token=$(printf 'protocol=https\nhost=dotfiles-secrets.local\nusername=claude-code\n' \
+    | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+  [[ -n "$_claude_token" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$_claude_token"
+  unset _claude_token
+fi
+
+if [[ -z "${GH_TOKEN:-}" ]] && command -v gh &>/dev/null; then
+  _gh_token=$(gh auth token 2>/dev/null)
+  [[ -n "$_gh_token" ]] && export GH_TOKEN="$_gh_token"
+  unset _gh_token
+fi

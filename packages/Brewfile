@@ -25,6 +25,7 @@ brew "zoxide"       # smarter cd
 brew "git"
 brew "gh"           # GitHub CLI
 brew "lazygit"      # TUI git client
+cask "git-credential-manager"  # credential.helper - see secrets/README.md
 
 # ── dev tools ─────────────────────────────────────────────────────────────────
 brew "curl"

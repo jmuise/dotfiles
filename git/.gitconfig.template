@@ -40,6 +40,15 @@
 [log]
 	date = iso
 
+# Synthetic host used to store tool tokens (e.g. Claude Code) as generic
+# git credentials via whatever credential.helper is active - see
+# secrets/README.md. "provider = generic" skips GCM's remote-host
+# auto-detection probe, which otherwise adds a multi-second delay/warning
+# any time a credential.helper is configured but this host has no secret
+# stored under it yet (e.g. before secrets/setup-claude-token.sh has run).
+[credential "https://dotfiles-secrets.local"]
+	provider = generic
+
 [alias]
 	# status / log
 	s    = status -sb

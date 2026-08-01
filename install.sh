@@ -89,6 +89,20 @@ is_linux && log "Context: Linux"
 log "Git..."
 link "$DOTFILES_DIR/git/.gitignore_global" "$HOME/.gitignore_global"
 
+# Windows gets a credential.helper for free (Git for Windows' system config)
+# and macOS via packages/Brewfile's cask - Linux has no package for it, so
+# ensure one is present before rendering ~/.gitconfig below. Also covers WSL
+# as a fallback if wsl/bridge-gcm.sh didn't run or couldn't find the Windows
+# binary, and devcontainers as a backstop alongside VS Code's own credential
+# forwarding. Content-gated - never overwrites an existing credential.helper.
+if is_linux; then
+  if $DRY_RUN; then
+    printf '  would check/install git-credential-manager (git/ensure-gcm.sh)\n'
+  else
+    bash "$DOTFILES_DIR/git/ensure-gcm.sh"
+  fi
+fi
+
 if [[ ! -f "$HOME/.gitconfig.local" ]]; then
   $DRY_RUN || cat > "$HOME/.gitconfig.local" <<'EOF'
 # ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles

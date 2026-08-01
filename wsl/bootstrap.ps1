@@ -51,7 +51,7 @@ switch ($state) {
 
 # state -eq "Ready" from here on
 if ($DryRun) {
-  Write-Host "  would install packages/apt.txt, migrate gitconfig credential, and run install.sh in Debian"
+  Write-Host "  would install packages/apt.txt, migrate gitconfig credential, bridge WSL git credentials to Windows Credential Manager, and run install.sh in Debian"
   return
 }
 
@@ -77,6 +77,32 @@ if ($LASTEXITCODE -ne 0) {
 
 log "Migrating git credential helper (if needed)..."
 wsl.exe -d Debian -- bash "$wslDotfiles/wsl/migrate-gitconfig-credential.sh" "$wslWindowsGitconfigLocal"
+
+log "Bridging WSL git credentials to Windows Credential Manager (if needed)..."
+$gitCmd = Get-Command git.exe -ErrorAction SilentlyContinue
+if ($gitCmd) {
+  $gitRoot = Split-Path (Split-Path $gitCmd.Source -Parent) -Parent
+  $gcmWindowsPath = Join-Path $gitRoot "mingw64\bin\git-credential-manager.exe"
+  if (Test-Path $gcmWindowsPath) {
+    $gcmWslPath = ConvertTo-WslPath $gcmWindowsPath
+    # Passed via a temp file's *content*, not as a wsl.exe argument: the
+    # path contains a space ("Program Files"), and wsl.exe re-joins and
+    # re-parses its arguments through the Linux shell internally, which
+    # mangles embedded spaces (confirmed live - it corrupted this into an
+    # unparseable git-config value on the first version of this script).
+    # $env:TEMP has no spaces for a normal user profile, so it's safe as an
+    # argument itself.
+    $gcmPathFile = Join-Path $env:TEMP "dotfiles-gcm-path.txt"
+    Set-Content -Path $gcmPathFile -Value $gcmWslPath -NoNewline -Encoding ascii
+    $gcmPathFileWsl = ConvertTo-WslPath $gcmPathFile
+    wsl.exe -d Debian -- bash "$wslDotfiles/wsl/bridge-gcm.sh" $gcmPathFileWsl
+    Remove-Item $gcmPathFile -ErrorAction SilentlyContinue
+  } else {
+    warn "git-credential-manager.exe not found under $gitRoot - skipping WSL credential bridge."
+  }
+} else {
+  warn "git.exe not found on Windows - skipping WSL credential bridge."
+}
 
 log "Running install.sh inside WSL..."
 wsl.exe -d Debian -- bash -lc "cd '$wslDotfiles' && ./install.sh"
