@@ -189,14 +189,20 @@ if is_devcontainer; then
     curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null \
       || warn "Claude Code install skipped (no curl or offline)"
   fi
-  apt_missing=()
-  command -v gh &>/dev/null || apt_missing+=(gh)
-  command -v delta &>/dev/null || apt_missing+=(git-delta)
-  if [[ ${#apt_missing[@]} -gt 0 ]] && ! $DRY_RUN; then
-    log "Installing ${apt_missing[*]} in container..."
-    sudo apt-get update -qq \
-      && sudo apt-get install -y --no-install-recommends "${apt_missing[@]}" \
-      || warn "apt install skipped for: ${apt_missing[*]} (no sudo/network or offline)"
+  if ! command -v gh &>/dev/null && ! $DRY_RUN; then
+    log "Installing gh in container..."
+    sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gh \
+      || warn "gh install skipped (no sudo/network, offline, or not in this image's apt sources)"
+  fi
+  # delta: not installed via apt - many minimal/slim devcontainer base images
+  # don't have git-delta in their default sources.list at all (confirmed
+  # live: "Unable to locate package" with working sudo and apt network
+  # access). git/ensure-delta.sh downloads a pinned, checksum-verified
+  # release instead, same approach as ensure-gcm.sh.
+  if ! $DRY_RUN; then
+    bash "$DOTFILES_DIR/git/ensure-delta.sh"
+  else
+    printf '  would check/install delta (git/ensure-delta.sh)\n'
   fi
 fi
 
