@@ -183,16 +183,17 @@ render "$gitconfig_rendered" "$HOME/.gitconfig" "$gitconfig_marker"
 # Re-checked every run (not just the first, when the block above already
 # warns) against the *rendered* ~/.gitconfig - not just .gitconfig.local's
 # raw text - so this also catches a literal legacy "Your Name" placeholder
-# left over from before this script stopped scaffolding one. The identity
-# guard hooks below turn this into a hard block at commit/push time - this is
-# just an earlier heads up.
+# left over from before this script stopped scaffolding one. Placeholder
+# *quality* (as opposed to plain emptiness) isn't judged here anymore -
+# shell/doctor.sh flags that at shell startup instead of this installer
+# hard-blocking commits/pushes on it (see memory/project_dotfiles_identity_guard.md
+# for why the old hook-based guard was retired).
 effective_name="$(git config --file "$HOME/.gitconfig" --get user.name 2>/dev/null || true)"
 effective_email="$(git config --file "$HOME/.gitconfig" --get user.email 2>/dev/null || true)"
-if [[ -z "$effective_name" || "$effective_name" == "Your Name" \
-   || -z "$effective_email" || "$effective_email" == "you@example.com" ]]; then
-  warn "No real git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.sh). Commits/pushes will be blocked until then."
+if [[ -z "$effective_name" || -z "$effective_email" ]]; then
+  warn "No git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.sh). See shell/doctor.sh for an ongoing reminder."
 elif ! is_devcontainer; then
-  # Push a confirmed-real identity into the forwarding channel so any
+  # Push a confirmed-set identity into the forwarding channel so any
   # devcontainer opened from this machine can pull it (see IDENTITY_HOST
   # above) instead of depending on VS Code's own git-config copy. Host/WSL
   # only - a devcontainer has no identity of its own worth propagating
@@ -203,10 +204,9 @@ fi
 
 # git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
-# whenever git pull/rebase/checkout change dotfiles files, and pre-commit/
-# pre-push (git/identity-guard.sh) block a placeholder identity. Runs after
-# the ~/.gitconfig render above so a mid-migration broken global config
-# (e.g. a dangling symlink) can't make this git config call itself fail.
+# whenever git pull/rebase/checkout change dotfiles files. Runs after the
+# ~/.gitconfig render above so a mid-migration broken global config (e.g. a
+# dangling symlink) can't make this git config call itself fail.
 log "Git hooks..."
 if $DRY_RUN; then
   printf '  git config core.hooksPath hooks\n'
@@ -216,29 +216,27 @@ else
   success "core.hooksPath -> hooks"
 fi
 
-# Global identity guard — same pre-commit/pre-push check
-# (git/identity-guard.sh), but wired up as core.hooksPath's *global* config
-# so it fires in every other repo on this machine too (WSL, devcontainers,
-# whatever), not just this one. Content-gated like git/ensure-gcm.sh: never
-# overwrites an existing global core.hooksPath (e.g. a user's own hook
-# manager) since that would silently disable it.
-log "Global git identity guard..."
+# Global identity guard hooks (git/global-hooks/) were retired in favor of
+# shell/doctor.sh's non-blocking startup warning - clean up global
+# core.hooksPath if *this* installer was the one who set it, so a machine
+# that ran an older version of this script doesn't keep pointing at a
+# now-empty directory. Only touches it when the value is exactly ours, same
+# never-clobber-a-stranger's-config caution as git/ensure-gcm.sh.
 existing_global_hooks="$(git config --global --get core.hooksPath 2>/dev/null || true)"
-global_hooks_dir="$DOTFILES_DIR/git/global-hooks"
-if [[ -n "$existing_global_hooks" && "$existing_global_hooks" != "$global_hooks_dir" ]]; then
-  warn "core.hooksPath already set globally to '$existing_global_hooks' — skipping identity guard wiring (add git/identity-guard.sh to it yourself if you want the check)."
-elif $DRY_RUN; then
-  printf '  git config --global core.hooksPath %s\n' "$global_hooks_dir"
-else
-  chmod +x "$global_hooks_dir"/* "$DOTFILES_DIR/git/identity-guard.sh" 2>/dev/null || true
-  git config --global core.hooksPath "$global_hooks_dir"
-  success "core.hooksPath (global) -> git/global-hooks"
+if [[ "$existing_global_hooks" == "$DOTFILES_DIR/git/global-hooks" ]]; then
+  if $DRY_RUN; then
+    printf '  git config --global --unset core.hooksPath\n'
+  else
+    git config --global --unset core.hooksPath
+    success "Removed global core.hooksPath (identity guard retired in favor of shell/doctor.sh)"
+  fi
 fi
 
 # shell
 log "Shell..."
 link "$DOTFILES_DIR/shell/aliases.sh"  "$HOME/.aliases"
 link "$DOTFILES_DIR/shell/exports.sh"  "$HOME/.exports"
+link "$DOTFILES_DIR/shell/doctor.sh"   "$HOME/.doctor"
 link "$DOTFILES_DIR/shell/.bashrc"     "$HOME/.bashrc"
 link "$DOTFILES_DIR/shell/.bash_profile" "$HOME/.bash_profile"
 link "$DOTFILES_DIR/shell/.zshrc"      "$HOME/.zshrc"

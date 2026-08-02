@@ -1,7 +1,0 @@
-#!/bin/sh
-# Installed via `git config --global core.hooksPath` (see install.sh/
-# install.ps1), so this fires in *every* repo on this machine - the point
-# being to catch a placeholder git identity (git/identity-guard.sh) before it
-# ever lands in a commit, not just at push time.
-DOTFILES_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-exec "$DOTFILES_DIR/git/identity-guard.sh"

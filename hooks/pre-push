@@ -1,5 +1,0 @@
-#!/bin/sh
-# This repo sets core.hooksPath to this directory locally, which overrides
-# the global identity guard (git/global-hooks/) wired up by install.sh for
-# every other repo - so it needs its own copy here to stay covered too.
-exec "$(dirname "$0")/../git/identity-guard.sh"

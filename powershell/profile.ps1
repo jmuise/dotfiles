@@ -79,6 +79,51 @@ if (-not $env:GH_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)) {
   if ($ghToken) { $env:GH_TOKEN = $ghToken }
 }
 
+# ── environment health check ─────────────────────────────────────────────────
+# Warns (never blocks) about drift like a placeholder git identity or
+# credential forwarding that didn't land - replaces the old pre-commit/
+# pre-push hard block (git/identity-guard.sh, now retired) that used to
+# refuse the commit outright. Silent when everything looks fine. Also
+# callable by hand as `doctor`. Mirrors shell/doctor.sh.
+function doctor {
+  $issues = 0
+  $name = git config user.name 2>$null
+  $email = git config user.email 2>$null
+  $placeholderNames = '^(Your Name|John Doe|Test|test)$'
+  $placeholderEmails = '^(you@example\.com|your\.email@example\.com|user@example\.com|test@example\.com|root@localhost)$'
+
+  if (-not $name -or $name -match $placeholderNames) {
+    Write-Host "⚠ git user.name is unset or a placeholder ($(if ($name) { $name } else { '<empty>' })) — commits will misattribute. Fix: git config --global user.name `"Your Actual Name`"" -ForegroundColor Yellow
+    $issues++
+  }
+  if (-not $email -or $email -match $placeholderEmails -or $email -notmatch '@.*\.') {
+    Write-Host "⚠ git user.email is unset or a placeholder ($(if ($email) { $email } else { '<empty>' })) — commits will misattribute. Fix: git config --global user.email `"you@yourdomain.com`"" -ForegroundColor Yellow
+    $issues++
+  }
+
+  $claudeTokenSentinel = Join-Path $env:LOCALAPPDATA "dotfiles\claude-token.configured"
+  if ((Test-Path $claudeTokenSentinel) -and -not $env:CLAUDE_CODE_OAUTH_TOKEN) {
+    Write-Host "⚠ Claude Code token forwarding is configured but CLAUDE_CODE_OAUTH_TOKEN is unset this session — see secrets/README.md" -ForegroundColor Yellow
+    $issues++
+  }
+
+  # `gh auth token` is a local read (no network call), same check used above
+  # to populate GH_TOKEN - safe to repeat here.
+  if (Get-Command gh -ErrorAction SilentlyContinue) {
+    $ghToken = gh auth token 2>$null
+    if (-not $ghToken) {
+      Write-Host "⚠ gh is installed but not authenticated (or its token is unreadable) — run: gh auth login" -ForegroundColor Yellow
+      $issues++
+    } elseif (-not $env:GH_TOKEN) {
+      Write-Host "⚠ gh is authenticated but GH_TOKEN is unset this session — try a fresh shell" -ForegroundColor Yellow
+      $issues++
+    }
+  }
+
+  return $issues
+}
+$null = doctor
+
 # ── local overrides ───────────────────────────────────────────────────────────
 $localProfile = Join-Path (Split-Path $PROFILE) "profile.local.ps1"
 if (Test-Path $localProfile) { . $localProfile }

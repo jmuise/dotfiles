@@ -6,6 +6,7 @@ DOTFILES_DIR="${DOTFILES_DIR:-$(cd "$(dirname "$(readlink -f "${(%):-%x}")")" 2>
 # Shared config
 [[ -f "$HOME/.exports" ]] && source "$HOME/.exports"
 [[ -f "$HOME/.aliases" ]] && source "$HOME/.aliases"
+[[ -f "$HOME/.doctor" ]]  && source "$HOME/.doctor"
 
 # ── zsh options ───────────────────────────────────────────────────────────────
 setopt AUTO_CD              # type a dir name to cd into it

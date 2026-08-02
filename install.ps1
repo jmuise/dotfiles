@@ -164,14 +164,17 @@ Set-Rendered $gitconfigRendered "$HOME\.gitconfig" $gitconfigMarker
 # time the file is created) against the *rendered* ~/.gitconfig - not just
 # .gitconfig.local's raw text - so this also catches a literal legacy
 # "Your Name" placeholder left over from before this script stopped
-# scaffolding one. The identity guard hooks below turn this into a hard
-# block at commit/push time - this is just an earlier heads up.
+# scaffolding one. Placeholder *quality* (as opposed to plain emptiness)
+# isn't judged here anymore - powershell/profile.ps1's doctor function flags
+# that at shell startup instead of this installer hard-blocking commits on
+# it (see memory/project_dotfiles_identity_guard.md for why the old
+# hook-based guard was retired).
 $effectiveName = git config --file "$HOME\.gitconfig" --get user.name 2>$null
 $effectiveEmail = git config --file "$HOME\.gitconfig" --get user.email 2>$null
-if ((-not $effectiveName) -or ($effectiveName -eq "Your Name") -or (-not $effectiveEmail) -or ($effectiveEmail -eq "you@example.com")) {
-  warn "No real git identity set — run: git config user.name `"Your Name`" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.ps1). Commits/pushes will be blocked until then."
+if ((-not $effectiveName) -or (-not $effectiveEmail)) {
+  warn "No git identity set — run: git config user.name `"Your Name`" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.ps1). See powershell/profile.ps1's doctor function for an ongoing reminder."
 } else {
-  # Push the confirmed-real identity into the same credential-forwarding
+  # Push the confirmed-set identity into the same credential-forwarding
   # channel used for the Claude Code token (secrets/README.md), so any
   # devcontainer opened from this Windows host can pull it (install.sh's
   # IDENTITY_HOST check) instead of depending on VS Code's own git-config
@@ -183,10 +186,9 @@ if ((-not $effectiveName) -or ($effectiveName -eq "Your Name") -or (-not $effect
 # Git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
 # whenever `git pull`/`git rebase`/`git checkout` change dotfiles files, in
-# addition to the logon safety net registered further down, and pre-commit/
-# pre-push (git/identity-guard.sh) block a placeholder identity. Runs after
-# the ~/.gitconfig render above so a mid-migration broken global config
-# (e.g. a dangling symlink) can't make this `git config` call itself fail.
+# addition to the logon safety net registered further down. Runs after the
+# ~/.gitconfig render above so a mid-migration broken global config (e.g. a
+# dangling symlink) can't make this `git config` call itself fail.
 log "Git hooks..."
 if ($DryRun) {
   Write-Host "  git config core.hooksPath hooks"
@@ -195,23 +197,21 @@ if ($DryRun) {
   success "core.hooksPath -> hooks"
 }
 
-# Global identity guard — same pre-commit/pre-push check
-# (git/identity-guard.sh, run via Git for Windows' bundled sh.exe like any
-# other hook), wired up as core.hooksPath's *global* config so it fires in
-# every other repo on this machine too (WSL runs its own install.sh and
-# wires this up separately). Content-gated like ensure-gcm.sh: never
-# overwrites an existing global core.hooksPath since that would silently
-# disable it.
-log "Global git identity guard..."
+# Global identity guard hooks (git/global-hooks/) were retired in favor of
+# powershell/profile.ps1's non-blocking doctor function - clean up global
+# core.hooksPath if *this* installer was the one who set it, so a machine
+# that ran an older version of this script doesn't keep pointing at a
+# now-empty directory. Only touches it when the value is exactly ours, same
+# never-clobber-a-stranger's-config caution as ensure-gcm.sh.
 $existingGlobalHooks = git config --global --get core.hooksPath 2>$null
 $globalHooksDir = "$DOTFILES\git\global-hooks"
-if ($existingGlobalHooks -and ($existingGlobalHooks -ne $globalHooksDir)) {
-  warn "core.hooksPath already set globally to '$existingGlobalHooks' — skipping identity guard wiring (add git/identity-guard.sh to it yourself if you want the check)."
-} elseif ($DryRun) {
-  Write-Host "  git config --global core.hooksPath $globalHooksDir"
-} else {
-  git config --global core.hooksPath $globalHooksDir
-  success "core.hooksPath (global) -> git/global-hooks"
+if ($existingGlobalHooks -eq $globalHooksDir) {
+  if ($DryRun) {
+    Write-Host "  git config --global --unset core.hooksPath"
+  } else {
+    git config --global --unset core.hooksPath
+    success "Removed global core.hooksPath (identity guard retired in favor of doctor function)"
+  }
 }
 
 # shell
