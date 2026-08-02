@@ -103,37 +103,46 @@ if is_linux; then
   fi
 fi
 
-# Devcontainers via VS Code's automatic "dotfiles" feature run this script
-# BEFORE VS Code's own "copy git config" step, and that copy appears to be
-# skipped once ~/.gitconfig already exists - observed empirically as a
-# deterministic repro across multiple rebuilds (rendering our own
-# ~/.gitconfig here, even with identity left unset, meant the real host
-# identity never landed) though VS Code doesn't document the exact condition
-# (github.com/microsoft/vscode-remote-release#3882). Since the host machine
-# is already guaranteed to have a real identity (this same install.sh
-# enforces that there too), the right move is to get out of the way
-# completely on a fresh container: skip ALL git identity/config setup below,
-# including the global identity guard, so ~/.gitconfig stays absent long
-# enough for VS Code's copy to actually run. Re-running ./install.sh by hand
-# afterward (the file will exist by then) picks up aliases/delta/hooksPath
-# and wires up the guard against the now-real, copied identity.
-defer_git_setup=false
-if is_devcontainer && [[ ! -f "$HOME/.gitconfig" ]]; then
-  defer_git_setup=true
-  warn "Devcontainer with no ~/.gitconfig yet — deferring all git identity/config setup so this script doesn't block VS Code's git-config copy from the host. Re-run ./install.sh once that's landed (e.g. from a fresh terminal) to pick up aliases/delta/hooksPath and wire up the identity guard."
-fi
+# Devcontainers: VS Code's own "copy git config" feature is not reliable
+# enough to depend on - confirmed empirically across several rebuilds that
+# it simply doesn't fire in this setup at all (no [user] section ever
+# appears, even though VS Code's own credential-forwarding proxy DOES get
+# wired up, so the container is clearly reachable - see
+# memory/project_dotfiles_identity_guard.md for the full trail, including a
+# dead-end attempt at deferring our own render to "get out of the way" of a
+# copy that was never coming). Instead, devcontainers pull the real identity
+# through the same git-credential-forwarding channel already proven reliable
+# for the Claude Code token (secrets/README.md): the host/WSL side pushes it
+# in further down (search IDENTITY_HOST below), independent of VS Code.
+IDENTITY_HOST="dotfiles-identity.local"
 
-if ! $defer_git_setup; then
 if [[ ! -f "$HOME/.gitconfig.local" ]]; then
-  # Devcontainers: VS Code's "copy git config" feature (see README, "Git
-  # identity comes along for free") copies a real identity from the host
-  # into ~/.gitconfig before this script ever runs - but ~/.gitconfig.local
-  # never survives a container rebuild, so without this check every rebuild
-  # would hit the branch below and scaffold a placeholder that then clobbers
-  # that real, already-copied identity when ~/.gitconfig gets rendered
-  # further down. Carry it forward instead of stomping it.
   existing_name="$(git config --file "$HOME/.gitconfig" --get user.name 2>/dev/null || true)"
   existing_email="$(git config --file "$HOME/.gitconfig" --get user.email 2>/dev/null || true)"
+
+  if is_devcontainer && { [[ -z "$existing_name" ]] || [[ "$existing_name" == "Your Name" ]] \
+     || [[ -z "$existing_email" ]] || [[ "$existing_email" == "you@example.com" ]]; }; then
+    # No local identity yet - try pulling one through credential forwarding
+    # before giving up. `-c credential.interactive=false` is load-bearing,
+    # not optional: without it, GCM pops an actual interactive (GUI, if a
+    # display is reachable - confirmed live, X11 is forwarded into this
+    # project's devcontainer) credential prompt when nothing is stored yet
+    # for this host, instead of just failing - caught only by live-testing
+    # the empty-host case, see memory/project_dotfiles_identity_guard.md.
+    # Timeout-guarded and `|| true`'d on top of that: `git credential fill`
+    # is fatal (exit 128), not just empty output, when no helper can supply
+    # a value and there's no TTY to prompt on - bit us before in the secrets
+    # work (memory/project_dotfiles_secrets.md), same failure mode.
+    forwarded="$(printf 'protocol=https\nhost=%s\n' "$IDENTITY_HOST" | timeout 5 git -c credential.interactive=false credential fill 2>/dev/null || true)"
+    forwarded_name="$(printf '%s\n' "$forwarded" | sed -n 's/^username=//p')"
+    forwarded_email="$(printf '%s\n' "$forwarded" | sed -n 's/^password=//p')"
+    if [[ -n "$forwarded_name" && -n "$forwarded_email" ]]; then
+      existing_name="$forwarded_name"
+      existing_email="$forwarded_email"
+      success "Pulled real git identity ($existing_name <$existing_email>) via credential forwarding"
+    fi
+  fi
+
   if [[ -n "$existing_name" && "$existing_name" != "Your Name" \
      && -n "$existing_email" && "$existing_email" != "you@example.com" ]]; then
     $DRY_RUN || cat > "$HOME/.gitconfig.local" <<EOF
@@ -182,8 +191,15 @@ effective_email="$(git config --file "$HOME/.gitconfig" --get user.email 2>/dev/
 if [[ -z "$effective_name" || "$effective_name" == "Your Name" \
    || -z "$effective_email" || "$effective_email" == "you@example.com" ]]; then
   warn "No real git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.sh). Commits/pushes will be blocked until then."
+elif ! is_devcontainer; then
+  # Push a confirmed-real identity into the forwarding channel so any
+  # devcontainer opened from this machine can pull it (see IDENTITY_HOST
+  # above) instead of depending on VS Code's own git-config copy. Host/WSL
+  # only - a devcontainer has no identity of its own worth propagating
+  # further, and this would just be a same-value round-trip there anyway.
+  printf 'protocol=https\nhost=%s\nusername=%s\npassword=%s\n' "$IDENTITY_HOST" "$effective_name" "$effective_email" \
+    | git credential approve 2>/dev/null || true
 fi
-fi # ! $defer_git_setup
 
 # git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
@@ -206,7 +222,6 @@ fi
 # whatever), not just this one. Content-gated like git/ensure-gcm.sh: never
 # overwrites an existing global core.hooksPath (e.g. a user's own hook
 # manager) since that would silently disable it.
-if ! $defer_git_setup; then
 log "Global git identity guard..."
 existing_global_hooks="$(git config --global --get core.hooksPath 2>/dev/null || true)"
 global_hooks_dir="$DOTFILES_DIR/git/global-hooks"
@@ -219,7 +234,6 @@ else
   git config --global core.hooksPath "$global_hooks_dir"
   success "core.hooksPath (global) -> git/global-hooks"
 fi
-fi # ! $defer_git_setup
 
 # shell
 log "Shell..."

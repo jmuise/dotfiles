@@ -49,6 +49,16 @@
 [credential "https://dotfiles-secrets.local"]
 	provider = generic
 
+# Carries the real git identity (name in username, email in password) into
+# devcontainers via the same forwarding channel as the synthetic host above -
+# install.sh pushes it here from the host/WSL, and pulls it back inside a
+# devcontainer, instead of depending on VS Code's own "copy git config"
+# feature, which doesn't reliably fire (see
+# memory/project_dotfiles_identity_guard.md). "provider = generic" for the
+# same reason as above: skips GCM's slow auto-detection probe.
+[credential "https://dotfiles-identity.local"]
+	provider = generic
+
 [alias]
 	# status / log
 	s    = status -sb

@@ -165,6 +165,14 @@ $effectiveName = git config --file "$HOME\.gitconfig" --get user.name 2>$null
 $effectiveEmail = git config --file "$HOME\.gitconfig" --get user.email 2>$null
 if ((-not $effectiveName) -or ($effectiveName -eq "Your Name") -or (-not $effectiveEmail) -or ($effectiveEmail -eq "you@example.com")) {
   warn "No real git identity set — run: git config user.name `"Your Name`" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.ps1). Commits/pushes will be blocked until then."
+} else {
+  # Push the confirmed-real identity into the same credential-forwarding
+  # channel used for the Claude Code token (secrets/README.md), so any
+  # devcontainer opened from this Windows host can pull it (install.sh's
+  # IDENTITY_HOST check) instead of depending on VS Code's own git-config
+  # copy, which doesn't reliably fire - see
+  # memory/project_dotfiles_identity_guard.md.
+  "protocol=https`nhost=dotfiles-identity.local`nusername=$effectiveName`npassword=$effectiveEmail`n" | git credential approve 2>$null
 }
 
 # Git hooks — points this checkout at the repo-tracked hooks/ dir so
