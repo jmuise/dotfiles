@@ -116,6 +116,11 @@
 
   // Remote: always install extensions in containers too
   "remote.extensionKind": {},
+  // Personal tooling preference, not project config: installed into every
+  // devcontainer regardless of that project's own devcontainer.json. Only
+  // gets the VS Code extension - install.sh separately installs the `claude`
+  // CLI itself inside the container (see "Devcontainer extras").
+  "dev.containers.defaultExtensions": ["anthropic.claude-code"],
   "claudeCode.preferredLocation": "panel",
   "python.analysis.typeCheckingMode": "strict",
   "dev.containers.mountWaylandSocket": false,
