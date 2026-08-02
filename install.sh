@@ -104,13 +104,33 @@ if is_linux; then
 fi
 
 if [[ ! -f "$HOME/.gitconfig.local" ]]; then
-  $DRY_RUN || cat > "$HOME/.gitconfig.local" <<'EOF'
+  # Devcontainers: VS Code's "copy git config" feature (see README, "Git
+  # identity comes along for free") copies a real identity from the host
+  # into ~/.gitconfig before this script ever runs - but ~/.gitconfig.local
+  # never survives a container rebuild, so without this check every rebuild
+  # would hit the branch below and scaffold a placeholder that then clobbers
+  # that real, already-copied identity when ~/.gitconfig gets rendered
+  # further down. Carry it forward instead of stomping it.
+  existing_name="$(git config --file "$HOME/.gitconfig" --get user.name 2>/dev/null || true)"
+  existing_email="$(git config --file "$HOME/.gitconfig" --get user.email 2>/dev/null || true)"
+  if [[ -n "$existing_name" && "$existing_name" != "Your Name" \
+     && -n "$existing_email" && "$existing_email" != "you@example.com" ]]; then
+    $DRY_RUN || cat > "$HOME/.gitconfig.local" <<EOF
+# ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles
+[user]
+	name  = $existing_name
+	email = $existing_email
+EOF
+    success "Carried forward existing git identity ($existing_name <$existing_email>) into ~/.gitconfig.local"
+  else
+    $DRY_RUN || cat > "$HOME/.gitconfig.local" <<'EOF'
 # ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles
 [user]
 	name  = Your Name
 	email = you@example.com
 EOF
-  warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.sh"
+    warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.sh"
+  fi
 fi
 
 gitconfig_marker="# Managed by dotfiles install.sh — do not edit directly.

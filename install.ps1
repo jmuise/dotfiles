@@ -114,15 +114,33 @@ New-Link "$DOTFILES\git\.gitignore_global" "$HOME\.gitignore_global"
 
 $gitconfigLocal = "$HOME\.gitconfig.local"
 if (-not (Test-Path $gitconfigLocal)) {
-  if (-not $DryRun) {
-    @"
+  # Carry forward a real identity already present in ~/.gitconfig (e.g. a
+  # devcontainer-style pre-copy, or .gitconfig.local having been deleted
+  # while ~/.gitconfig itself was left alone) instead of stomping it with a
+  # placeholder - mirrors install.sh's equivalent check.
+  $existingName = if (Test-Path "$HOME\.gitconfig") { git config --file "$HOME\.gitconfig" --get user.name 2>$null } else { $null }
+  $existingEmail = if (Test-Path "$HOME\.gitconfig") { git config --file "$HOME\.gitconfig" --get user.email 2>$null } else { $null }
+  if ($existingName -and ($existingName -ne "Your Name") -and $existingEmail -and ($existingEmail -ne "you@example.com")) {
+    if (-not $DryRun) {
+      @"
+# ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles
+[user]
+	name  = $existingName
+	email = $existingEmail
+"@ | Set-Content $gitconfigLocal -Encoding UTF8
+    }
+    success "Carried forward existing git identity ($existingName <$existingEmail>) into ~/.gitconfig.local"
+  } else {
+    if (-not $DryRun) {
+      @"
 # ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles
 [user]
 	name  = Your Name
 	email = you@example.com
 "@ | Set-Content $gitconfigLocal -Encoding UTF8
+    }
+    warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.ps1"
   }
-  warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.ps1"
 }
 
 $gitconfigMarker = "# Managed by dotfiles install.ps1 — do not edit directly.`n# Edit git\.gitconfig.template or ~\.gitconfig.local, then re-run install.ps1.`n`n"
