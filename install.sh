@@ -233,6 +233,46 @@ if is_devcontainer; then
       mkdir -p "$CACHE_DIR"
       touch "$SENTINEL"
       log "Credential forwarding confirmed - CLAUDE_CODE_OAUTH_TOKEN will be exported automatically in new shells."
+
+      # The interactive `claude` TUI's onboarding wizard doesn't check for a
+      # valid CLAUDE_CODE_OAUTH_TOKEN before showing the login-method picker
+      # and opening a real browser OAuth flow - confirmed live, and it's a
+      # known, accepted Anthropic limitation (GitHub issue #46259, closed
+      # not-planned), not something fixable by having a valid token present.
+      # Documented workaround from that issue, live-tested here: pre-set
+      # hasCompletedOnboarding in ~/.claude.json. Only do this once
+      # forwarding is confirmed above - completing onboarding without a
+      # working token behind it would just trade one confusing failure for
+      # another. Deliberately does NOT touch the separate workspace
+      # folder-trust prompt - that's legitimate per-workspace friction, not
+      # onboarding.
+      if command -v jq &>/dev/null; then
+        CLAUDE_JSON="$HOME/.claude.json"
+        [[ -f "$CLAUDE_JSON" ]] || echo '{}' > "$CLAUDE_JSON"
+        jq '.hasCompletedOnboarding = true' "$CLAUDE_JSON" > "$CLAUDE_JSON.tmp" \
+          && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
+
+        # Theme lives separately in ~/.claude/settings.json, not
+        # ~/.claude.json. "light-daltonized" is the literal value Claude
+        # Code itself writes for the "Light mode (colorblind-friendly)"
+        # picker option - confirmed live rather than guessed, since the
+        # picker's on-screen labels don't map predictably to their stored
+        # values (e.g. "auto" for "Auto (match terminal)" is a simple
+        # lowercase word, but colorblind-friendly turned out to be
+        # "daltonized", not "colorblind"). This is a fixed choice, not
+        # auto-switching with the OS - the picker doesn't offer a combined
+        # "auto + colorblind-friendly" option, so this user picked the fixed
+        # colorblind-friendly variant over auto-switching.
+        mkdir -p "$HOME/.claude"
+        SETTINGS_JSON="$HOME/.claude/settings.json"
+        [[ -f "$SETTINGS_JSON" ]] || echo '{}' > "$SETTINGS_JSON"
+        jq '.theme = "light-daltonized"' "$SETTINGS_JSON" > "$SETTINGS_JSON.tmp" \
+          && mv "$SETTINGS_JSON.tmp" "$SETTINGS_JSON"
+
+        log "Claude Code onboarding (login picker + theme) pre-configured."
+      else
+        warn "jq not found - skipping Claude Code onboarding pre-configuration."
+      fi
     else
       warn "Credential forwarding not confirmed for Claude Code token - new shells won't export it automatically. See secrets/README.md."
     fi
