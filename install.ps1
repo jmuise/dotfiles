@@ -343,6 +343,22 @@ $sshMarker = "# Managed by dotfiles install.ps1 — do not edit directly.`n# Edi
 $sshRendered = $sshMarker + "Include ~/.ssh/config.local`n`n" + (Get-Content "$DOTFILES\ssh\config.template" -Raw)
 Set-Rendered $sshRendered "$HOME\.ssh\config" $sshMarker
 
+# Lock ~/.ssh down to the current user (+ SYSTEM) only - mirrors install.sh's
+# chmod 700/600 (OpenSSH refuses to use a config/key it considers
+# world/group-readable). (OI)(CI) on the directory means anything created
+# under it later inherits the same restriction; the explicit call on config
+# itself covers the file that already existed before inheritance was reset.
+# Best-effort - never blocks the rest of the install if icacls fails (e.g. a
+# filesystem that doesn't support ACL inheritance removal).
+if (-not $DryRun) {
+  try {
+    icacls "$HOME\.ssh" /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" *>$null
+    icacls "$HOME\.ssh\config" /inheritance:r /grant:r "$($env:USERNAME):F" /grant:r "SYSTEM:F" *>$null
+  } catch {
+    warn "Could not lock down ~/.ssh permissions via icacls"
+  }
+}
+
 # WSL (Debian) + Windows Terminal — makes WSL the primary daily-driver shell,
 # with Windows Terminal defaulting new tabs into it. See wsl/bootstrap.ps1 and
 # windows-terminal/configure.ps1 for the actual logic; kept out of this file
