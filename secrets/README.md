@@ -124,6 +124,17 @@ fails fast instead of turning into a slow probe on every future shell) and
 writes the sentinel file itself if it succeeds - no manual step needed
 beyond having already run `secrets/setup-claude-token.sh` on the host.
 
+**The VS Code Claude Code *extension* (not just the CLI) can come up looking
+unauthenticated on first container start, even once `CLAUDE_CODE_OAUTH_TOKEN`
+is correctly set and the CLI works fine in the integrated terminal.** The
+extension and CLI read the same auth env vars (`ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `apiKeyHelper`) with identical precedence - this
+isn't an OAuth-vs-API-key gap. The cause is timing: the extension host reads
+VS Code's cached "resolved shell environment" snapshot, which can be taken
+before `install.sh` finishes wiring up credential forwarding and the sentinel
+file. **Fix: run `Developer: Reload Window` once after `install.sh`
+completes** - confirmed live this resolves it without any config changes.
+
 **`remoteEnv`/`${localEnv:...}` in the project's `devcontainer.json` does
 NOT work reliably and shouldn't be relied on**, at least for a project opened
 from a WSL folder: confirmed live that even though the tokens were correctly
