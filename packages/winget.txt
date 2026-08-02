@@ -4,6 +4,7 @@
 # Shell & terminal
 Microsoft.WindowsTerminal
 Microsoft.PowerShell
+Starship.Starship
 
 # Git
 Git.Git

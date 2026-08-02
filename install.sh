@@ -243,7 +243,21 @@ link "$DOTFILES_DIR/shell/.bash_profile" "$HOME/.bash_profile"
 link "$DOTFILES_DIR/shell/.zshrc"      "$HOME/.zshrc"
 link "$DOTFILES_DIR/shell/.zprofile"   "$HOME/.zprofile"
 
-# starship
+# starship — packages/Brewfile installs the binary on macOS; Linux has no
+# apt package for it at all (confirmed: not in Debian/Ubuntu's default
+# sources), so install it the same pinned-nothing, official-installer way
+# the devcontainer path already relied on, just no longer gated to
+# devcontainers only - native Linux was linking starship.toml with no binary
+# to go with it.
+log "Starship..."
+if is_linux && ! command -v starship &>/dev/null; then
+  if $DRY_RUN; then
+    printf '  would install starship (curl https://starship.rs/install.sh)\n'
+  else
+    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes 2>/dev/null \
+      || warn "starship install skipped (no curl or offline)"
+  fi
+fi
 link "$DOTFILES_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
 
 # tmux
@@ -301,11 +315,9 @@ link "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-comm
 # devcontainer extras
 if is_devcontainer; then
   log "Devcontainer extras..."
-  if ! command -v starship &>/dev/null && ! $DRY_RUN; then
-    log "Installing starship in container..."
-    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes 2>/dev/null \
-      || warn "starship install skipped (no curl or offline)"
-  fi
+  # starship itself is installed above (now covers any Linux, not just
+  # devcontainers) - this block is just the extras still specific to
+  # devcontainers.
   if ! command -v claude &>/dev/null && ! $DRY_RUN; then
     log "Installing Claude Code in container..."
     curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null \
