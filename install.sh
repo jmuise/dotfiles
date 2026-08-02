@@ -287,6 +287,12 @@ if ! is_devcontainer; then
   link "$DOTFILES_DIR/vscode/keybindings.json" "$VSCODE_DIR/keybindings.json"
 fi
 
+# Claude Code — global CLAUDE.md (behavior preferences, not project config).
+# Not gated by is_devcontainer: Claude Code runs on the host and inside
+# containers alike, and this should follow it everywhere.
+log "Claude Code global config..."
+link "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+
 # devcontainer extras
 if is_devcontainer; then
   log "Devcontainer extras..."

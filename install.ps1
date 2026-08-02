@@ -305,6 +305,10 @@ $vsDir = "$env:APPDATA\Code\User"
 New-Link "$DOTFILES\vscode\settings.json"    "$vsDir\settings.json"
 New-Link "$DOTFILES\vscode\keybindings.json" "$vsDir\keybindings.json"
 
+# Claude Code — global CLAUDE.md (behavior preferences, not project config)
+log "Claude Code global config..."
+New-Link "$DOTFILES\claude\CLAUDE.md" "$env:USERPROFILE\.claude\CLAUDE.md"
+
 # starship
 log "Starship..."
 $starshipConfig = "$env:USERPROFILE\.config\starship.toml"
