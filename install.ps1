@@ -49,8 +49,13 @@ function New-Link {
   }
   if ($DryRun) { Write-Host "  link: $Src → $Dst"; return }
   if (Test-Path $Dst) {
-    warn "Backing up existing $Dst → $Dst.bak"
-    Move-Item $Dst "$Dst.bak" -Force
+    $item = Get-Item $Dst -Force
+    if ($item.LinkType) {
+      Remove-Item $Dst -Force
+    } else {
+      warn "Backing up existing $Dst → $Dst.bak"
+      Move-Item $Dst "$Dst.bak" -Force
+    }
   }
   New-Item -ItemType SymbolicLink -Path $Dst -Target $Src -Force | Out-Null
   success "linked $Dst"
