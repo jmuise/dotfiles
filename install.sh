@@ -123,13 +123,20 @@ if [[ ! -f "$HOME/.gitconfig.local" ]]; then
 EOF
     success "Carried forward existing git identity ($existing_name <$existing_email>) into ~/.gitconfig.local"
   else
+    # No identity to carry forward (e.g. VS Code's devcontainer "copy git
+    # config" hasn't run yet at this point in the lifecycle, or never will -
+    # see README's Devcontainers section). Leave [user] unset rather than
+    # scaffolding a fake-looking "Your Name" - a value that LOOKS like a real
+    # identity is worse than none, since the guard hooks below only catch
+    # placeholders they know about, but always catch empty.
     $DRY_RUN || cat > "$HOME/.gitconfig.local" <<'EOF'
 # ~/.gitconfig.local — machine-specific overrides, NOT committed to dotfiles
-[user]
-	name  = Your Name
-	email = you@example.com
+# No identity could be auto-detected. Fill in your name and email, e.g.:
+#[user]
+#	name  = Your Name
+#	email = you@example.com
 EOF
-    warn "Created ~/.gitconfig.local — fill in your name and email, then re-run install.sh"
+    warn "Created ~/.gitconfig.local with no git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com (then re-run install.sh, or edit ~/.gitconfig.local directly). Commits/pushes are blocked until then."
   fi
 fi
 
@@ -144,12 +151,16 @@ ${gitconfig_local_content}"
 render "$gitconfig_rendered" "$HOME/.gitconfig" "$gitconfig_marker"
 
 # Re-checked every run (not just the first, when the block above already
-# warns) since a ~/.gitconfig.local created on a prior run and never filled
-# in would otherwise render silently. The identity guard hooks below turn
-# this into a hard block at commit/push time - this is just an earlier heads
-# up.
-if grep -qE 'name[[:space:]]*=[[:space:]]*Your Name|email[[:space:]]*=[[:space:]]*you@example\.com' "$HOME/.gitconfig.local" 2>/dev/null; then
-  warn "~/.gitconfig.local still has placeholder identity — fill in your name and email, then re-run install.sh. Commits/pushes will be blocked until then."
+# warns) against the *rendered* ~/.gitconfig - not just .gitconfig.local's
+# raw text - so this also catches a literal legacy "Your Name" placeholder
+# left over from before this script stopped scaffolding one. The identity
+# guard hooks below turn this into a hard block at commit/push time - this is
+# just an earlier heads up.
+effective_name="$(git config --file "$HOME/.gitconfig" --get user.name 2>/dev/null || true)"
+effective_email="$(git config --file "$HOME/.gitconfig" --get user.email 2>/dev/null || true)"
+if [[ -z "$effective_name" || "$effective_name" == "Your Name" \
+   || -z "$effective_email" || "$effective_email" == "you@example.com" ]]; then
+  warn "No real git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.sh). Commits/pushes will be blocked until then."
 fi
 
 # git hooks — points this checkout at the repo-tracked hooks/ dir so
