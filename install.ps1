@@ -130,18 +130,47 @@ $gitconfigLocalContent = if (Test-Path $gitconfigLocal) { Get-Content $gitconfig
 $gitconfigRendered = $gitconfigMarker + (Get-Content "$DOTFILES\git\.gitconfig.template" -Raw) + "`n" + $gitconfigLocalContent
 Set-Rendered $gitconfigRendered "$HOME\.gitconfig" $gitconfigMarker
 
+# Re-checked every run (not just the block above, which only fires the first
+# time the file is created) since a ~/.gitconfig.local created on a prior run
+# and never filled in would otherwise render silently. The identity guard
+# hooks below turn this into a hard block at commit/push time - this is just
+# an earlier heads up.
+if ((Test-Path $gitconfigLocal) -and ((Get-Content $gitconfigLocal -Raw) -match 'name\s*=\s*Your Name|email\s*=\s*you@example\.com')) {
+  warn "~/.gitconfig.local still has placeholder identity — fill in your name and email, then re-run install.ps1. Commits/pushes will be blocked until then."
+}
+
 # Git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
 # whenever `git pull`/`git rebase`/`git checkout` change dotfiles files, in
-# addition to the logon safety net registered further down. Runs after the
-# ~/.gitconfig render above so a mid-migration broken global config (e.g. a
-# dangling symlink) can't make this `git config` call itself fail.
+# addition to the logon safety net registered further down, and pre-commit/
+# pre-push (git/identity-guard.sh) block a placeholder identity. Runs after
+# the ~/.gitconfig render above so a mid-migration broken global config
+# (e.g. a dangling symlink) can't make this `git config` call itself fail.
 log "Git hooks..."
 if ($DryRun) {
   Write-Host "  git config core.hooksPath hooks"
 } else {
   git -C $DOTFILES config core.hooksPath hooks
   success "core.hooksPath -> hooks"
+}
+
+# Global identity guard — same pre-commit/pre-push check
+# (git/identity-guard.sh, run via Git for Windows' bundled sh.exe like any
+# other hook), wired up as core.hooksPath's *global* config so it fires in
+# every other repo on this machine too (WSL runs its own install.sh and
+# wires this up separately). Content-gated like ensure-gcm.sh: never
+# overwrites an existing global core.hooksPath since that would silently
+# disable it.
+log "Global git identity guard..."
+$existingGlobalHooks = git config --global --get core.hooksPath 2>$null
+$globalHooksDir = "$DOTFILES\git\global-hooks"
+if ($existingGlobalHooks -and ($existingGlobalHooks -ne $globalHooksDir)) {
+  warn "core.hooksPath already set globally to '$existingGlobalHooks' — skipping identity guard wiring (add git/identity-guard.sh to it yourself if you want the check)."
+} elseif ($DryRun) {
+  Write-Host "  git config --global core.hooksPath $globalHooksDir"
+} else {
+  git config --global core.hooksPath $globalHooksDir
+  success "core.hooksPath (global) -> git/global-hooks"
 }
 
 # shell

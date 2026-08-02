@@ -1,0 +1,7 @@
+#!/bin/sh
+# Installed via `git config --global core.hooksPath` (see install.sh/
+# install.ps1), so this fires in *every* repo on this machine. Backstop for
+# pre-commit (git/identity-guard.sh) - catches commits authored elsewhere
+# (an old checkout, a rebase, --no-verify) that never went through it.
+DOTFILES_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+exec "$DOTFILES_DIR/git/identity-guard.sh"

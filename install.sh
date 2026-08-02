@@ -123,11 +123,21 @@ gitconfig_rendered="${gitconfig_marker}$(cat "$DOTFILES_DIR/git/.gitconfig.templ
 ${gitconfig_local_content}"
 render "$gitconfig_rendered" "$HOME/.gitconfig" "$gitconfig_marker"
 
+# Re-checked every run (not just the first, when the block above already
+# warns) since a ~/.gitconfig.local created on a prior run and never filled
+# in would otherwise render silently. The identity guard hooks below turn
+# this into a hard block at commit/push time - this is just an earlier heads
+# up.
+if grep -qE 'name[[:space:]]*=[[:space:]]*Your Name|email[[:space:]]*=[[:space:]]*you@example\.com' "$HOME/.gitconfig.local" 2>/dev/null; then
+  warn "~/.gitconfig.local still has placeholder identity — fill in your name and email, then re-run install.sh. Commits/pushes will be blocked until then."
+fi
+
 # git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
-# whenever git pull/rebase/checkout change dotfiles files. Runs after the
-# ~/.gitconfig render above so a mid-migration broken global config (e.g. a
-# dangling symlink) can't make this git config call itself fail.
+# whenever git pull/rebase/checkout change dotfiles files, and pre-commit/
+# pre-push (git/identity-guard.sh) block a placeholder identity. Runs after
+# the ~/.gitconfig render above so a mid-migration broken global config
+# (e.g. a dangling symlink) can't make this git config call itself fail.
 log "Git hooks..."
 if $DRY_RUN; then
   printf '  git config core.hooksPath hooks\n'
@@ -135,6 +145,25 @@ else
   git -C "$DOTFILES_DIR" config core.hooksPath hooks
   chmod +x "$DOTFILES_DIR"/hooks/* 2>/dev/null || true
   success "core.hooksPath -> hooks"
+fi
+
+# Global identity guard — same pre-commit/pre-push check
+# (git/identity-guard.sh), but wired up as core.hooksPath's *global* config
+# so it fires in every other repo on this machine too (WSL, devcontainers,
+# whatever), not just this one. Content-gated like git/ensure-gcm.sh: never
+# overwrites an existing global core.hooksPath (e.g. a user's own hook
+# manager) since that would silently disable it.
+log "Global git identity guard..."
+existing_global_hooks="$(git config --global --get core.hooksPath 2>/dev/null || true)"
+global_hooks_dir="$DOTFILES_DIR/git/global-hooks"
+if [[ -n "$existing_global_hooks" && "$existing_global_hooks" != "$global_hooks_dir" ]]; then
+  warn "core.hooksPath already set globally to '$existing_global_hooks' — skipping identity guard wiring (add git/identity-guard.sh to it yourself if you want the check)."
+elif $DRY_RUN; then
+  printf '  git config --global core.hooksPath %s\n' "$global_hooks_dir"
+else
+  chmod +x "$global_hooks_dir"/* "$DOTFILES_DIR/git/identity-guard.sh" 2>/dev/null || true
+  git config --global core.hooksPath "$global_hooks_dir"
+  success "core.hooksPath (global) -> git/global-hooks"
 fi
 
 # shell
