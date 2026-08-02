@@ -287,11 +287,17 @@ if ! is_devcontainer; then
   link "$DOTFILES_DIR/vscode/keybindings.json" "$VSCODE_DIR/keybindings.json"
 fi
 
-# Claude Code — global CLAUDE.md (behavior preferences, not project config).
-# Not gated by is_devcontainer: Claude Code runs on the host and inside
-# containers alike, and this should follow it everywhere.
+# Claude Code — global CLAUDE.md, settings, and statusline (behavior
+# preferences, not project config). Not gated by is_devcontainer: Claude Code
+# runs on the host and inside containers alike, and this should follow it
+# everywhere. settings.json's statusLine command uses a literal "$HOME" in
+# the command string (expanded by whatever shell Claude Code spawns it with,
+# not by this script) instead of a baked-in absolute path, so the same
+# tracked file works unmodified on every machine/user.
 log "Claude Code global config..."
 link "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+link "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
+link "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 
 # devcontainer extras
 if is_devcontainer; then
@@ -383,8 +389,15 @@ if is_devcontainer; then
         mkdir -p "$HOME/.claude"
         SETTINGS_JSON="$HOME/.claude/settings.json"
         [[ -f "$SETTINGS_JSON" ]] || echo '{}' > "$SETTINGS_JSON"
-        jq '.theme = "light-daltonized"' "$SETTINGS_JSON" > "$SETTINGS_JSON.tmp" \
-          && mv "$SETTINGS_JSON.tmp" "$SETTINGS_JSON"
+        # settings.json is now a symlink into the dotfiles checkout (see the
+        # link() call above) - mv'ing a tmp file straight onto it would
+        # delete the symlink and replace it with a plain file, silently
+        # un-tracking it on every future install.sh run. Resolve to the real
+        # underlying file first so only its *content* changes, same as this
+        # devcontainer's own disposable clone of the repo.
+        SETTINGS_JSON_REAL="$(readlink -f "$SETTINGS_JSON" 2>/dev/null || echo "$SETTINGS_JSON")"
+        jq '.theme = "light-daltonized"' "$SETTINGS_JSON_REAL" > "$SETTINGS_JSON_REAL.tmp" \
+          && mv "$SETTINGS_JSON_REAL.tmp" "$SETTINGS_JSON_REAL"
 
         log "Claude Code onboarding (login picker + theme) pre-configured."
       else

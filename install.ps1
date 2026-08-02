@@ -310,9 +310,15 @@ $vsDir = "$env:APPDATA\Code\User"
 New-Link "$DOTFILES\vscode\settings.json"    "$vsDir\settings.json"
 New-Link "$DOTFILES\vscode\keybindings.json" "$vsDir\keybindings.json"
 
-# Claude Code — global CLAUDE.md (behavior preferences, not project config)
+# Claude Code — global CLAUDE.md, settings, and statusline (behavior
+# preferences, not project config). settings.json's statusLine command uses
+# a literal "$HOME" in the command string (expanded by whatever shell Claude
+# Code spawns it with, not by this script), so the same tracked file works
+# unmodified on every machine/user - see install.sh's matching comment.
 log "Claude Code global config..."
 New-Link "$DOTFILES\claude\CLAUDE.md" "$env:USERPROFILE\.claude\CLAUDE.md"
+New-Link "$DOTFILES\claude\settings.json" "$env:USERPROFILE\.claude\settings.json"
+New-Link "$DOTFILES\claude\statusline-command.sh" "$env:USERPROFILE\.claude\statusline-command.sh"
 
 # starship
 log "Starship..."
