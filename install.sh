@@ -204,6 +204,33 @@ if is_devcontainer; then
   else
     printf '  would check/install delta (git/ensure-delta.sh)\n'
   fi
+
+  # Claude Code token via VS Code's git-credential forwarding - confirmed
+  # live to work even for the synthetic host in secrets/README.md, not just
+  # real hosts like github.com. shell/exports.sh already knows how to pull
+  # the token through that forward, but only attempts it once the sentinel
+  # file below exists (see exports.sh's comment - an unconfigured/unreachable
+  # host makes `git credential fill` slow, so the gate exists to avoid
+  # eating that cost on every new shell). That sentinel is normally written
+  # by secrets/setup-claude-token.sh, which runs on the host, never inside a
+  # container - so a fresh devcontainer filesystem never has it even when
+  # forwarding works fine. Detect that here, once, with a timeout so a
+  # container where forwarding *doesn't* work fails fast instead of hanging
+  # every future shell.
+  CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles"
+  SENTINEL="$CACHE_DIR/claude-token.configured"
+  if [[ ! -f "$SENTINEL" ]] && command -v git &>/dev/null && command -v timeout &>/dev/null && ! $DRY_RUN; then
+    log "Checking Claude Code credential forwarding..."
+    FORWARDED="$(timeout 5 git credential fill 2>/dev/null <<< $'protocol=https\nhost=dotfiles-secrets.local\nusername=claude-code' \
+      | sed -n 's/^password=//p')"
+    if [[ -n "$FORWARDED" ]]; then
+      mkdir -p "$CACHE_DIR"
+      touch "$SENTINEL"
+      log "Credential forwarding confirmed - CLAUDE_CODE_OAUTH_TOKEN will be exported automatically in new shells."
+    else
+      warn "Credential forwarding not confirmed for Claude Code token - new shells won't export it automatically. See secrets/README.md."
+    fi
+  fi
 fi
 
 # macOS system defaults
