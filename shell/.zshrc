@@ -1,12 +1,13 @@
 # .zshrc — interactive zsh config
 
 # Detect dotfiles dir even through symlinks
-DOTFILES_DIR="${DOTFILES_DIR:-$(cd "$(dirname "$(readlink -f "${(%):-%x}")")" 2>/dev/null && pwd)}"
+DOTFILES_DIR="${DOTFILES_DIR:-$(cd "$(dirname "$(dirname "$(readlink -f "${(%):-%x}")")")" 2>/dev/null && pwd)}"
 
 # Shared config
 [[ -f "$HOME/.exports" ]] && source "$HOME/.exports"
 [[ -f "$HOME/.aliases" ]] && source "$HOME/.aliases"
 [[ -f "$HOME/.doctor" ]]  && source "$HOME/.doctor"
+[[ -f "$HOME/.self-heal" ]] && source "$HOME/.self-heal"
 
 # ── zsh options ───────────────────────────────────────────────────────────────
 setopt AUTO_CD              # type a dir name to cd into it

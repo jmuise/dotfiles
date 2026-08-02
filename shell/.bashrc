@@ -6,10 +6,11 @@
 [[ $- != *i* ]] && return
 
 # Load shared config
-DOTFILES_DIR="${DOTFILES_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)}"
+DOTFILES_DIR="${DOTFILES_DIR:-$(cd "$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")" && pwd)}"
 [[ -f "$HOME/.exports" ]] && source "$HOME/.exports"
 [[ -f "$HOME/.aliases" ]] && source "$HOME/.aliases"
 [[ -f "$HOME/.doctor" ]]  && source "$HOME/.doctor"
+[[ -f "$HOME/.self-heal" ]] && source "$HOME/.self-heal"
 
 # Bash options
 shopt -s checkwinsize  # update LINES/COLUMNS after each command
