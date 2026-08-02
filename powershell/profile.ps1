@@ -44,11 +44,15 @@ function gl   { git pull @args }
 function gco  { git checkout @args }
 function gcob { git checkout -b @args }
 function glog { git log --oneline --graph --decorate -20 @args }
+function gdiff  { git diff @args }
+function gstash { git stash push -m @args }
+function gpop   { git stash pop @args }
 
 # docker
 function dc   { docker compose @args }
 function dcu  { docker compose up -d @args }
 function dcd  { docker compose down @args }
+function dcl  { docker compose logs -f @args }
 function dps  { docker ps --format "table {{.Names}}`t{{.Status}}`t{{.Ports}}" }
 
 function reload  { . $PROFILE }
