@@ -2,8 +2,9 @@
 *.local
 .gitconfig.local
 
-# SSH — only config.example is tracked
+# SSH — only config.template and config.local.example are tracked
 ssh/config
+ssh/config.local
 ssh/sockets/
 
 # macOS

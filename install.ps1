@@ -245,17 +245,23 @@ log "Starship..."
 $starshipConfig = "$env:USERPROFILE\.config\starship.toml"
 New-Link "$DOTFILES\starship\starship.toml" $starshipConfig
 
-# SSH config (template only, never overwrite)
-$sshConfig = "$HOME\.ssh\config"
-if (-not (Test-Path $sshConfig)) {
-  if (-not $DryRun) {
-    New-Item -ItemType Directory -Force "$HOME\.ssh" | Out-Null
-    Copy-Item "$DOTFILES\ssh\config.example" $sshConfig
-    warn "Copied SSH config template to ~/.ssh/config — customize it"
-  }
-} else {
-  warn "~/.ssh/config already exists — skipping (see ssh\config.example)"
+# SSH — rendered (template + ~/.ssh/config.local merged), same reasoning as
+# ~/.gitconfig above: copy-once meant a bug in the shipped template stayed
+# permanently baked into every machine that had already bootstrapped, with
+# no way for a later `git pull` to fix it. User hosts/overrides go in
+# ~/.ssh/config.local, included before the managed defaults so they take
+# precedence (ssh_config is first-obtained-value-wins) - created once here
+# and never touched again after that.
+log "SSH..."
+if (-not $DryRun) { New-Item -ItemType Directory -Force "$HOME\.ssh" | Out-Null }
+$sshConfigLocal = "$HOME\.ssh\config.local"
+if (-not (Test-Path $sshConfigLocal)) {
+  if (-not $DryRun) { Copy-Item "$DOTFILES\ssh\config.local.example" $sshConfigLocal }
+  warn "Created ~/.ssh/config.local — add machine-specific hosts there"
 }
+$sshMarker = "# Managed by dotfiles install.ps1 — do not edit directly.`n# Edit ssh\config.template or ~\.ssh\config.local, then re-run install.ps1.`n`n"
+$sshRendered = $sshMarker + "Include ~/.ssh/config.local`n`n" + (Get-Content "$DOTFILES\ssh\config.template" -Raw)
+Set-Rendered $sshRendered "$HOME\.ssh\config" $sshMarker
 
 # WSL (Debian) + Windows Terminal — makes WSL the primary daily-driver shell,
 # with Windows Terminal defaulting new tabs into it. See wsl/bootstrap.ps1 and

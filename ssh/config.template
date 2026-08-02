@@ -1,6 +1,12 @@
-# ~/.ssh/config — SSH client config
-# Copy this to ~/.ssh/config and customize.
+# Managed section of ~/.ssh/config — rendered by install.sh, do not edit
+# the rendered file directly. Edit this template (repo-tracked) for changes
+# that should apply everywhere, or ~/.ssh/config.local (machine-specific,
+# never committed) for your own hosts — see ssh/config.local.example.
 # NEVER commit private keys or passwords.
+
+# UseKeychain is macOS-only; IgnoreUnknown makes non-macOS OpenSSH (Linux/WSL)
+# skip it silently instead of erroring, so this file works unmodified everywhere.
+IgnoreUnknown UseKeychain
 
 # ── defaults ──────────────────────────────────────────────────────────────────
 Host *
@@ -18,23 +24,11 @@ Host *
 
     # Add keys to macOS keychain automatically
     AddKeysToAgent yes
-    UseKeychain   yes   # macOS only — remove on Linux
+    UseKeychain   yes
 
     # Harden ciphers
     Ciphers      chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
     MACs         hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com
-
-# ── jump host pattern ─────────────────────────────────────────────────────────
-# Host *.internal
-#     ProxyJump   bastion.example.com
-#     User        jeremy
-
-# ── example host ─────────────────────────────────────────────────────────────
-# Host myserver
-#     HostName    192.168.1.100
-#     User        jeremy
-#     IdentityFile ~/.ssh/id_ed25519_myserver
-#     Port        22
 
 # ── GitHub ────────────────────────────────────────────────────────────────────
 Host github.com

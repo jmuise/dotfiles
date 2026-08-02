@@ -13,7 +13,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
-| `ssh/` | `config.example` template (no keys) |
+| `ssh/` | `config.template` (rendered to `~/.ssh/config`, no keys) |
 | `secrets/` | One-time setup scripts that seed `CLAUDE_CODE_OAUTH_TOKEN` (and reuse `gh`'s own session for `GH_TOKEN`) via your OS credential store — see [secrets/README.md](secrets/README.md) |
 | `packages/` | `Brewfile`, `apt.txt`, `winget.txt` + a versioned lockfile/update-review workflow for winget |
 | `macos/` | Sensible `defaults write` settings |
@@ -185,9 +185,17 @@ Never committed, never leaked — put machine-specific overrides in local files 
 | `~/.bashrc.local` | Bash overrides for this machine |
 | `~/.zshrc.local` | Zsh overrides for this machine |
 | `~/.aliases.local` | Extra aliases |
-| `~/.ssh/config` | SSH hosts (copied from `ssh/config.example`, not symlinked) |
+| `~/.ssh/config.local` | Your own SSH hosts/overrides (see `ssh/config.local.example`) |
 
-The installer creates `~/.gitconfig.local` on first run with placeholder values.
+The installer creates `~/.gitconfig.local` and `~/.ssh/config.local` on first run with placeholder values.
+
+`~/.ssh/config`, like `~/.gitconfig`, is rendered (not copied once) — every
+install.sh run merges `ssh/config.template` with `~/.ssh/config.local` into a
+fresh `~/.ssh/config`. That means a bugfix to the tracked template reaches
+machines that already bootstrapped automatically, via the post-merge hook
+below, instead of being frozen in at first install with no way for a later
+`git pull` to fix it. Your own hosts and per-host overrides live in
+`~/.ssh/config.local`, which install.sh creates once and never touches again.
 
 `~/.gitconfig` is the one exception to "everything tracked gets symlinked
 straight from the repo": the installer **renders** it by concatenating
@@ -266,7 +274,8 @@ dotfiles/
 ├── tmux/
 │   └── .tmux.conf
 ├── ssh/
-│   └── config.example  ← template only, never symlinked
+│   ├── config.template        ← rendered into ~/.ssh/config, never symlinked
+│   └── config.local.example   ← stub copied to ~/.ssh/config.local on first run
 ├── secrets/
 │   ├── README.md
 │   ├── setup-claude-token.sh    ← one-time: stores Claude's token via GCM
@@ -293,8 +302,8 @@ dotfiles/
 ## Security
 
 - No secrets, keys, tokens, or credentials are committed
-- `~/.gitconfig.local`, `~/.ssh/config`, and `*.local` files are in `.gitignore`
-- SSH config is copied (not symlinked) so you can add host entries without affecting the repo
+- `~/.gitconfig.local`, `~/.ssh/config`, `~/.ssh/config.local`, and `*.local` files are in `.gitignore`
+- SSH config is rendered (not symlinked) so you can add host entries in `~/.ssh/config.local` without affecting the repo
 - `.gitignore_global` blocks common secret file patterns globally
 - Tool tokens (Claude Code, `gh`) are never written into this repo or any
   dotfile — they live in your OS credential store / keyring, seeded by

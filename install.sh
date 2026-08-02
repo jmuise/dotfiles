@@ -152,17 +152,30 @@ link "$DOTFILES_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
 # tmux
 link "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
 
-# SSH — copy template if no config exists, never overwrite
-if [[ ! -f "$HOME/.ssh/config" ]]; then
-  if ! $DRY_RUN; then
-    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-    cp "$DOTFILES_DIR/ssh/config.example" "$HOME/.ssh/config"
-    chmod 600 "$HOME/.ssh/config"
-    warn "Copied SSH config template to ~/.ssh/config — customize it"
-  fi
-else
-  warn "~/.ssh/config already exists — skipping (see ssh/config.example)"
+# SSH — rendered (template + ~/.ssh/config.local merged) like ~/.gitconfig,
+# instead of copy-once. Copy-once meant a bug in the shipped template (e.g. a
+# macOS-only option that isn't valid on Linux OpenSSH) got permanently baked
+# into every machine that had already bootstrapped, with no way for a later
+# `git pull` to ever fix it. Rendering on every run means the post-merge hook
+# above re-applies template fixes automatically. User hosts/overrides go in
+# ~/.ssh/config.local, included before the managed defaults so they take
+# precedence (ssh_config is first-obtained-value-wins) - install.sh creates
+# that file once and never touches it again after that.
+log "SSH..."
+$DRY_RUN || { mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; }
+if [[ ! -f "$HOME/.ssh/config.local" ]]; then
+  $DRY_RUN || cp "$DOTFILES_DIR/ssh/config.local.example" "$HOME/.ssh/config.local"
+  warn "Created ~/.ssh/config.local — add machine-specific hosts there"
 fi
+ssh_marker="# Managed by dotfiles install.sh — do not edit directly.
+# Edit ssh/config.template or ~/.ssh/config.local, then re-run install.sh.
+
+"
+ssh_rendered="${ssh_marker}Include ~/.ssh/config.local
+
+$(cat "$DOTFILES_DIR/ssh/config.template")"
+render "$ssh_rendered" "$HOME/.ssh/config" "$ssh_marker"
+$DRY_RUN || chmod 600 "$HOME/.ssh/config"
 
 # VS Code — skip inside devcontainer (settings sync handles it there)
 if ! is_devcontainer; then

@@ -1,0 +1,20 @@
+# ~/.ssh/config.local — your machine-specific hosts and overrides.
+# install.sh creates this file once and never touches it again, unlike
+# ~/.ssh/config itself which gets re-rendered from ssh/config.template on
+# every install.sh run (including the automatic run after `git pull`).
+#
+# This file is Include'd BEFORE the managed defaults, so entries here take
+# precedence for hosts they match (ssh_config uses first-obtained-value-wins,
+# not last — more specific/overriding blocks must come first).
+
+# ── jump host pattern ─────────────────────────────────────────────────────────
+# Host *.internal
+#     ProxyJump   bastion.example.com
+#     User        jeremy
+
+# ── example host ─────────────────────────────────────────────────────────────
+# Host myserver
+#     HostName    192.168.1.100
+#     User        jeremy
+#     IdentityFile ~/.ssh/id_ed25519_myserver
+#     Port        22
