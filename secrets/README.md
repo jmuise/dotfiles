@@ -110,38 +110,31 @@ no-ops if the bridge already set one up.
 ## Devcontainers
 
 `install.sh` runs the same way inside a devcontainer as anywhere else, so
-`shell/exports.sh`'s lookup runs there too - but two things determine whether
-it actually finds anything:
+`shell/exports.sh`'s lookup runs there too - but it needs both a working
+credential forward *and* the sentinel file for that lookup to actually fire.
 
-1. **VS Code's Dev Containers git-credential forwarding.** VS Code proxies
-   `git credential fill`/`approve` from inside the container back to the
-   host's real credential helper - confirmed working for real hosts
-   (`github.com`). **Not yet confirmed for a synthetic host** like
-   `dotfiles-secrets.local` - the forwarding may or may not be host-agnostic.
-   Needs a live test inside an actual devcontainer.
-2. **`remoteEnv` in the *project's* `devcontainer.json`.** This repo can't
-   modify other projects' `devcontainer.json` files, so if (1) above doesn't
-   pan out, the reliable fallback is pulling the token from the *host*
-   environment at container-creation time:
+**VS Code's Dev Containers git-credential forwarding is the reliable path.**
+VS Code proxies `git credential fill`/`approve` from inside the container
+back to the host's real credential helper - confirmed live working not just
+for real hosts (`github.com`) but for the synthetic host
+(`dotfiles-secrets.local`) too, so this works without any per-project
+`devcontainer.json` changes. `install.sh`'s devcontainer-extras step tests
+this once (with a timeout, so a container where forwarding *isn't* set up
+fails fast instead of turning into a slow probe on every future shell) and
+writes the sentinel file itself if it succeeds - no manual step needed
+beyond having already run `secrets/setup-claude-token.sh` on the host.
 
-   ```json
-   "remoteEnv": {
-     "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}",
-     "GH_TOKEN": "${localEnv:GH_TOKEN}"
-   }
-   ```
-
-   Add this to a project's `devcontainer.json` and, as long as the host shell
-   that launched VS Code already had these exported (which it will, once
-   `secrets/setup-claude-token.*` has been run there), they land in the
-   container automatically. `shell/exports.sh`'s `-z` guard means it only
-   attempts the in-container lookup if these *aren't* already set this way -
-   the two mechanisms don't conflict.
-
-   Since it's genuinely unclear whether VS Code launches read `${localEnv:...}`
-   from a WSL shell's environment or the Windows one (depends how the project
-   was opened), `shell/exports.sh` and `powershell/profile.ps1` both export
-   these - whichever one VS Code reads from, it'll be there.
+**`remoteEnv`/`${localEnv:...}` in the project's `devcontainer.json` does
+NOT work reliably and shouldn't be relied on**, at least for a project opened
+from a WSL folder: confirmed live that even though the tokens were correctly
+exported in the WSL shell used to launch VS Code (and visible in that same
+window's own integrated terminal), they came through empty inside the
+container. Root cause: `${localEnv:...}` is resolved by a separate, more bare
+invocation the Dev Containers extension uses to build the container, which -
+unlike the integrated terminal - does not appear to go through shell startup
+files (`.bashrc`/`.profile`) at all, so it never runs the
+`git credential fill` lookup that produces the token in the first place. This
+isn't fixable from this repo's side. Use credential forwarding instead.
 
 ## Security
 

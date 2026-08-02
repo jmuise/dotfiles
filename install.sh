@@ -221,8 +221,14 @@ if is_devcontainer; then
   SENTINEL="$CACHE_DIR/claude-token.configured"
   if [[ ! -f "$SENTINEL" ]] && command -v git &>/dev/null && command -v timeout &>/dev/null && ! $DRY_RUN; then
     log "Checking Claude Code credential forwarding..."
+    # `git credential fill` is fatal (exit 128), not just empty-output, when
+    # no helper can supply a password and there's no TTY to prompt on -
+    # confirmed live. Under this script's `set -euo pipefail`, that would
+    # abort the entire install run on any devcontainer where forwarding
+    # isn't set up, so the failure must be caught here, not just ignored via
+    # 2>/dev/null.
     FORWARDED="$(timeout 5 git credential fill 2>/dev/null <<< $'protocol=https\nhost=dotfiles-secrets.local\nusername=claude-code' \
-      | sed -n 's/^password=//p')"
+      | sed -n 's/^password=//p')" || true
     if [[ -n "$FORWARDED" ]]; then
       mkdir -p "$CACHE_DIR"
       touch "$SENTINEL"
