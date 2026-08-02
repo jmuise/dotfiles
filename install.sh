@@ -103,6 +103,27 @@ if is_linux; then
   fi
 fi
 
+# Devcontainers via VS Code's automatic "dotfiles" feature run this script
+# BEFORE VS Code's own "copy git config" step, and that copy appears to be
+# skipped once ~/.gitconfig already exists - observed empirically as a
+# deterministic repro across multiple rebuilds (rendering our own
+# ~/.gitconfig here, even with identity left unset, meant the real host
+# identity never landed) though VS Code doesn't document the exact condition
+# (github.com/microsoft/vscode-remote-release#3882). Since the host machine
+# is already guaranteed to have a real identity (this same install.sh
+# enforces that there too), the right move is to get out of the way
+# completely on a fresh container: skip ALL git identity/config setup below,
+# including the global identity guard, so ~/.gitconfig stays absent long
+# enough for VS Code's copy to actually run. Re-running ./install.sh by hand
+# afterward (the file will exist by then) picks up aliases/delta/hooksPath
+# and wires up the guard against the now-real, copied identity.
+defer_git_setup=false
+if is_devcontainer && [[ ! -f "$HOME/.gitconfig" ]]; then
+  defer_git_setup=true
+  warn "Devcontainer with no ~/.gitconfig yet — deferring all git identity/config setup so this script doesn't block VS Code's git-config copy from the host. Re-run ./install.sh once that's landed (e.g. from a fresh terminal) to pick up aliases/delta/hooksPath and wire up the identity guard."
+fi
+
+if ! $defer_git_setup; then
 if [[ ! -f "$HOME/.gitconfig.local" ]]; then
   # Devcontainers: VS Code's "copy git config" feature (see README, "Git
   # identity comes along for free") copies a real identity from the host
@@ -162,6 +183,7 @@ if [[ -z "$effective_name" || "$effective_name" == "Your Name" \
    || -z "$effective_email" || "$effective_email" == "you@example.com" ]]; then
   warn "No real git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com (or edit ~/.gitconfig.local and re-run install.sh). Commits/pushes will be blocked until then."
 fi
+fi # ! $defer_git_setup
 
 # git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
@@ -184,6 +206,7 @@ fi
 # whatever), not just this one. Content-gated like git/ensure-gcm.sh: never
 # overwrites an existing global core.hooksPath (e.g. a user's own hook
 # manager) since that would silently disable it.
+if ! $defer_git_setup; then
 log "Global git identity guard..."
 existing_global_hooks="$(git config --global --get core.hooksPath 2>/dev/null || true)"
 global_hooks_dir="$DOTFILES_DIR/git/global-hooks"
@@ -196,6 +219,7 @@ else
   git config --global core.hooksPath "$global_hooks_dir"
   success "core.hooksPath (global) -> git/global-hooks"
 fi
+fi # ! $defer_git_setup
 
 # shell
 log "Shell..."
