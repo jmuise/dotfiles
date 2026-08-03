@@ -1,0 +1,2 @@
+-- yazi/init.lua — loaded by yazi as a plugin init file.
+-- Add require("plugin-name") calls here as plugins are added.

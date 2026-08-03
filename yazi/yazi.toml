@@ -1,0 +1,25 @@
+[manager]
+show_hidden  = false
+sort_by      = "natural"
+sort_sensitive = false
+sort_reverse = false
+sort_dir_first = true
+
+[preview]
+tab_size = 2
+max_width  = 600
+max_height = 900
+# Use bat for syntax-highlighted file previews (already in packages)
+# Yazi auto-discovers bat when it's on PATH — no explicit config needed.
+
+[opener]
+edit = [
+  { run = 'nvim "$@"', block = true, desc = "nvim" },
+]
+
+[open]
+rules = [
+  { mime = "text/*",       use = "edit" },
+  { mime = "application/json", use = "edit" },
+  { mime = "inode/x-empty",   use = "edit" },
+]

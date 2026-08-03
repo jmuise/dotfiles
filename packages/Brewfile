@@ -20,6 +20,7 @@ brew "delta"        # better git diff
 brew "jq"           # JSON processor
 brew "yq"           # YAML processor
 brew "zoxide"       # smarter cd
+brew "yazi"         # terminal file manager
 
 # ── git ───────────────────────────────────────────────────────────────────────
 brew "git"

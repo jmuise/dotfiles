@@ -290,6 +290,34 @@ if is_linux and not shutil.which("lazygit"):
             warn(f"lazygit install skipped: {_e}")
 link(DOTFILES / "lazygit" / "config.yml", HOME / ".config" / "lazygit" / "config.yml")
 
+# ── yazi ──────────────────────────────────────────────────────────────────────
+log("yazi...")
+if is_linux and not shutil.which("yazi"):
+    if DRY_RUN:
+        print("  would install yazi to ~/.local/bin (GitHub releases zip)")
+    else:
+        _arch = "x86_64" if platform.machine() == "x86_64" else "aarch64"
+        _zip_name = f"yazi-{_arch}-unknown-linux-musl.zip"
+        _url = f"https://github.com/sxyazi/yazi/releases/latest/download/{_zip_name}"
+        log(f"Installing yazi ({_arch})...")
+        try:
+            with tempfile.TemporaryDirectory() as _tmp:
+                _zippath = Path(_tmp) / "yazi.zip"
+                urllib.request.urlretrieve(_url, _zippath)
+                _bin = HOME / ".local" / "bin"
+                _bin.mkdir(parents=True, exist_ok=True)
+                _prefix = f"yazi-{_arch}-unknown-linux-musl"
+                with zipfile.ZipFile(_zippath) as _zf:
+                    for _name in ("yazi", "ya"):
+                        _member = f"{_prefix}/{_name}"
+                        if _member in _zf.namelist():
+                            (_bin / _name).write_bytes(_zf.read(_member))
+                            (_bin / _name).chmod(0o755)
+            success("yazi installed")
+        except Exception as _e:
+            warn(f"yazi install skipped: {_e}")
+link(DOTFILES / "yazi", HOME / ".config" / "yazi")
+
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")
 ssh_dir = HOME / ".ssh"

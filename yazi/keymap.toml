@@ -1,0 +1,17 @@
+[manager]
+keymap = [
+  # Quick navigation to common dirs
+  { on = "~",       run = "cd ~",              desc = "Go home" },
+  { on = ".",       run = "cd .",              desc = "Refresh" },
+
+  # Toggle hidden files
+  { on = "H",       run = "hidden toggle",     desc = "Toggle hidden files" },
+
+  # Copy path variants
+  { on = ["y", "p"], run = "copy path",        desc = "Copy path" },
+  { on = ["y", "d"], run = "copy dirname",     desc = "Copy directory" },
+  { on = ["y", "f"], run = "copy filename",    desc = "Copy filename" },
+
+  # Open shell in current dir
+  { on = "<C-s>",   run = "shell --block --confirm 'exec $SHELL'", desc = "Open shell here" },
+]
