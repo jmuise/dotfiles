@@ -119,24 +119,28 @@ if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
   }
 }
 
-# Python — resolved by shim path, not Get-Command. The Microsoft Store App
+# Python — resolved by explicit path, not Get-Command. The Microsoft Store App
 # Execution Alias stub writes to the console via Win32 WriteConsole (bypassing
-# PowerShell's *>$null redirect) and Get-Command's result cache can return the
-# stub even after Scoop's shim is on PATH. Checking the shim file directly
-# avoids both problems.
-$pyPath = $null
-if (Test-Path "$scoopShims\python.exe") {
-  $pyPath = "$scoopShims\python.exe"
+# PowerShell's *>$null redirect) and Get-Command can cache the stub even after
+# Scoop's shim exists on PATH. Probe candidate paths in priority order so the
+# stub is never in the picture.
+function Find-ScoopPython {
+  @(
+    "$HOME\scoop\apps\python\current\python.exe",  # actual install (most reliable)
+    "$scoopShims\python.exe",                       # shim (standard name)
+    "$scoopShims\python3.exe"                       # shim (alternate name)
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
+
+$pyPath = Find-ScoopPython
 if (-not $pyPath) {
-  # Scoop shim not present yet — install Python, then point at the shim.
   if ($DryRun) {
     Write-Host "  scoop install python"
-    $pyPath = "$scoopShims\python.exe"
+    $pyPath = "$HOME\scoop\apps\python\current\python.exe"
   } elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
     log "Installing Python via Scoop..."
     scoop install python
-    if (Test-Path "$scoopShims\python.exe") { $pyPath = "$scoopShims\python.exe" }
+    $pyPath = Find-ScoopPython
   }
 }
 if (-not $pyPath) {
