@@ -416,6 +416,45 @@ if (-not $DryRun) {
   }
 }
 
+# ~/.wslconfig — rendered (template + ~/.wslconfig.local merged), same
+# reasoning as ~/.gitconfig/~/.ssh/config above. Applies machine-wide to every
+# WSL2 distro (not just Debian), so it's rendered unconditionally, even under
+# -SkipWSL. Durable defaults (currently: autoMemoryReclaim, see
+# wsl/.wslconfig.template for why) live in the tracked template; per-machine
+# tuning (memory/processors, which vary by hardware) lives in
+# ~/.wslconfig.local, created once and never touched again after that.
+log "WSL config (.wslconfig)..."
+$wslconfigLocal = "$HOME\.wslconfig.local"
+if (-not (Test-Path $wslconfigLocal)) {
+  if (Test-Path "$HOME\.wslconfig") {
+    # Carry forward everything except any existing [experimental] block,
+    # which the template now owns - keeping both would leave two
+    # [experimental] sections in the rendered file with unpredictable
+    # last-wins-per-parser behavior between the old and new autoMemoryReclaim
+    # values.
+    $lines = (Get-Content "$HOME\.wslconfig" -Raw) -split "`r?`n"
+    $carried = New-Object System.Collections.Generic.List[string]
+    $inExperimental = $false
+    foreach ($line in $lines) {
+      if ($line -match '^\s*\[(.+?)\]\s*$') { $inExperimental = ($matches[1] -eq "experimental") }
+      if (-not $inExperimental) { $carried.Add($line) }
+    }
+    if (-not $DryRun) { Set-Content $wslconfigLocal -Value ($carried -join "`n").Trim() -Encoding UTF8 }
+    success "Carried forward existing ~/.wslconfig into ~/.wslconfig.local (dropped its [experimental] block, now managed by wsl/.wslconfig.template)"
+  } else {
+    if (-not $DryRun) { Copy-Item "$DOTFILES\wsl\.wslconfig.local.example" $wslconfigLocal }
+    warn "Created ~/.wslconfig.local — add machine-specific memory/processors there if needed"
+  }
+}
+$wslconfigMarker = "# Managed by dotfiles install.ps1 — do not edit directly.`n# Edit wsl\.wslconfig.template or ~\.wslconfig.local, then re-run install.ps1.`n`n"
+$wslconfigLocalContent = if (Test-Path $wslconfigLocal) { (Get-Content $wslconfigLocal -Raw).Trim() } else { "" }
+$wslconfigRendered = $wslconfigMarker + $wslconfigLocalContent + "`n`n" + (Get-Content "$DOTFILES\wsl\.wslconfig.template" -Raw)
+$wslconfigChanged = (-not (Test-Path "$HOME\.wslconfig")) -or ((Get-Content "$HOME\.wslconfig" -Raw) -ne $wslconfigRendered)
+Set-Rendered $wslconfigRendered "$HOME\.wslconfig" $wslconfigMarker
+if ($wslconfigChanged -and -not $DryRun) {
+  warn "~/.wslconfig changed — run 'wsl --shutdown' once to apply it (stops every running WSL distro, so this is never run for you automatically)"
+}
+
 # WSL (Debian) + Windows Terminal — makes WSL the primary daily-driver shell,
 # with Windows Terminal defaulting new tabs into it. See wsl/bootstrap.ps1 and
 # windows-terminal/configure.ps1 for the actual logic; kept out of this file

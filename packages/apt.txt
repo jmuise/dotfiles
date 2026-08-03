@@ -27,3 +27,10 @@ unzip
 # Containers
 docker.io
 docker-compose
+# docker-compose already installs its plugin to /usr/libexec/docker/cli-plugins
+# (one of docker's built-in plugin search dirs), but docker-buildx doesn't
+# ride along with anything above - install it explicitly so `docker build`'s
+# BuildKit path and `docker compose build` work without depending on Docker
+# Desktop's WSL integration (whose /mnt/wsl/docker-desktop/cli-tools mount
+# goes stale across Docker Desktop VM restarts - see wsl/.wslconfig.template).
+docker-buildx

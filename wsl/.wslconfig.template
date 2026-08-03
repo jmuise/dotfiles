@@ -1,0 +1,15 @@
+# ── experimental ──────────────────────────────────────────────────────────────
+# "gradual" walks the whole VM's memory graph in the background to reclaim
+# freed pages; under memory pressure (several projects' containers idling at
+# once) that walk has been a source of extra WSL2 VM instability, observed
+# here as Docker Desktop's own VM restarting mid-session. Each restart leaves
+# every already-running distro's /mnt/wsl/docker-desktop/cli-tools mount
+# (which docker-compose/docker-buildx symlinks under /usr/local/lib/docker/
+# cli-plugins point into) wired to the now-destroyed VM session, so `docker
+# compose`/`docker buildx` start failing with I/O errors until `wsl --shutdown`
+# forces a remount - see packages/apt.txt's docker-buildx entry for the other
+# half of this fix (a native plugin that doesn't depend on that mount at all).
+# "dropcache" reclaims just as eagerly on cache-drop but skips the background
+# walk implicated in the instability.
+[experimental]
+autoMemoryReclaim=dropcache

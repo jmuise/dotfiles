@@ -1,0 +1,14 @@
+# ~/.wslconfig.local — your machine-specific WSL2 tuning (memory, processors).
+# install.ps1 creates this file once and never touches it again, unlike
+# ~/.wslconfig itself which gets re-rendered from wsl/.wslconfig.template on
+# every install.ps1 run. If ~/.wslconfig already existed before dotfiles
+# managed it, install.ps1 carries its [wsl2] settings forward into this file
+# automatically the first time it runs, instead of discarding them.
+#
+# Changes to ~/.wslconfig only take effect after `wsl --shutdown` (this stops
+# every running WSL distro, so install.ps1 never runs it for you).
+
+# ── example ───────────────────────────────────────────────────────────────────
+# [wsl2]
+# memory=8GB
+# processors=8

@@ -157,6 +157,29 @@ auto-generated WSL-distro profile, since that GUID is derived per-machine and
 isn't portable across machines. Everything else in your `settings.json`
 (color scheme, opacity, keybindings) is left untouched.
 
+### `.wslconfig` and Docker Desktop WSL integration flakiness
+
+`install.ps1` also renders `~/.wslconfig` (template + `~/.wslconfig.local`
+merged, same pattern as `~/.gitconfig`/`~/.ssh/config` — see
+[Machine-specific config](#machine-specific-config)) with
+`autoMemoryReclaim=dropcache` instead of WSL2's default `gradual`, and
+`packages/apt.txt` installs `docker-buildx` explicitly. Together these fix a
+recurring failure mode: Docker Desktop's own VM restarting (sleep/resume,
+or memory pressure that `gradual` reclaim has been observed to worsen)
+leaves every already-running WSL distro's `/mnt/wsl/docker-desktop/cli-tools`
+mount pointing at a now-destroyed VM session, so the `docker-compose`/
+`docker-buildx` symlinks under `/usr/local/lib/docker/cli-plugins` that
+Docker Desktop's WSL integration publishes start failing with I/O errors —
+breaking `docker compose`/`docker buildx`, and with them VS Code's Dev
+Containers extension, until `wsl --shutdown` forces a remount. Debian's own
+`docker-compose`/`docker-buildx` apt packages install real plugin binaries
+that don't depend on that mount at all, so they keep working across Docker
+Desktop VM restarts without a `wsl --shutdown`.
+
+`~/.wslconfig` changes still require `wsl --shutdown` to take effect —
+`install.ps1` warns when it changes the file but never runs `wsl --shutdown`
+itself, since that stops every running WSL distro/container.
+
 ## Secrets
 
 Git and `gh` already persist their own auth via your OS credential store /
@@ -187,8 +210,11 @@ Never committed, never leaked — put machine-specific overrides in local files 
 | `~/.zshrc.local` | Zsh overrides for this machine |
 | `~/.aliases.local` | Extra aliases |
 | `~/.ssh/config.local` | Your own SSH hosts/overrides (see `ssh/config.local.example`) |
+| `~/.wslconfig.local` | Your WSL2 memory/processors tuning (see `wsl/.wslconfig.local.example`) |
 
-The installer creates `~/.gitconfig.local` and `~/.ssh/config.local` on first run with placeholder values.
+The installer creates `~/.gitconfig.local`, `~/.ssh/config.local`, and
+`~/.wslconfig.local` on first run — the last one carries forward any tuning
+from a pre-existing `~/.wslconfig` instead of using the placeholder example.
 
 `~/.ssh/config`, like `~/.gitconfig`, is rendered (not copied once) — every
 install.sh run merges `ssh/config.template` with `~/.ssh/config.local` into a
@@ -293,7 +319,9 @@ dotfiles/
 │   ├── bootstrap.ps1                      ← orchestrator: state detection, apt, migration, install.sh
 │   ├── detect-state.ps1                   ← WSL/Debian readiness-state detection
 │   ├── migrate-gitconfig-credential.sh    ← preserves an existing git credential helper
-│   └── bridge-gcm.sh                      ← points WSL git at Windows' GCM, see secrets/README.md
+│   ├── bridge-gcm.sh                      ← points WSL git at Windows' GCM, see secrets/README.md
+│   ├── .wslconfig.template                ← rendered into ~/.wslconfig, never symlinked
+│   └── .wslconfig.local.example           ← stub copied to ~/.wslconfig.local on first run
 ├── windows-terminal/
 │   └── configure.ps1   ← points Windows Terminal's default profile at Debian WSL
 └── macos/
