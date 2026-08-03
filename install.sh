@@ -214,6 +214,17 @@ if ! is_devcontainer && command -v gh &>/dev/null; then
   if [[ -n "$gh_token_to_push" ]]; then
     printf 'protocol=https\nhost=%s\nusername=%s\npassword=%s\n' "$GH_HOST" "gh-cli" "$gh_token_to_push" \
       | git credential approve 2>/dev/null || true
+    # `approve` reports success (exit 0) even when nothing was actually
+    # persisted, e.g. no credential.helper configured or a broken one -
+    # confirmed before for the Claude Code token (see
+    # memory/project_dotfiles_secrets.md). Read it straight back rather than
+    # trusting the exit code.
+    gh_readback="$(printf 'protocol=https\nhost=%s\nusername=%s\n' "$GH_HOST" "gh-cli" \
+      | git credential fill 2>/dev/null | sed -n 's/^password=//p')"
+    if [[ "$gh_readback" != "$gh_token_to_push" ]]; then
+      warn "gh token approve reported success but reading it back from credential.helper didn't match - it likely wasn't actually persisted. Run 'git config --get credential.helper' to check. See secrets/README.md."
+    fi
+    unset gh_readback
   fi
   unset gh_token_to_push
 fi

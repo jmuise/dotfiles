@@ -193,6 +193,16 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
   $ghTokenToPush = gh auth token 2>$null
   if ($ghTokenToPush) {
     "protocol=https`nhost=dotfiles-gh.local`nusername=gh-cli`npassword=$ghTokenToPush`n" | git credential approve 2>$null
+    # `approve` reports success even when nothing was actually persisted -
+    # confirmed before for the Claude Code token (see
+    # memory/project_dotfiles_secrets.md). Read it straight back rather than
+    # trusting the exit code.
+    $ghCredOutput = "protocol=https`nhost=dotfiles-gh.local`nusername=gh-cli`n" | git credential fill 2>$null
+    $ghPasswordLine = $ghCredOutput | Where-Object { $_ -like "password=*" } | Select-Object -First 1
+    $ghReadback = if ($ghPasswordLine) { $ghPasswordLine.Substring(9) } else { $null }
+    if ($ghReadback -ne $ghTokenToPush) {
+      warn "gh token approve reported success but reading it back from credential.helper didn't match - it likely wasn't actually persisted. Run 'git config --get credential.helper' to check. See secrets/README.md."
+    }
   }
 }
 
