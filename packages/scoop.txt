@@ -23,6 +23,9 @@ main/jq
 main/delta
 main/yazi
 
+# Language runtimes
+main/python
+
 # Editor
 main/neovim
 extras/vscode

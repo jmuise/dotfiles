@@ -97,26 +97,40 @@ if ([Environment]::GetEnvironmentVariable("HOME", "User") -ne $env:USERPROFILE) 
   success "HOME already set to $env:USERPROFILE"
 }
 
-# Ensure Python 3 is available — winget install if not. Python is intentionally
-# not in packages/scoop.txt because Scoop itself hasn't been installed yet at
-# this point in the script; the bootstrap order is PS7 → Python → install.py →
-# Scoop. Scoop's python can be installed later if a side-by-side version is needed.
+# Scoop — bootstrapped here, early, so its Python can be used for install.py
+# below. Scoop requires no admin and installs to ~/scoop. The full package list
+# (buckets + remaining packages from scoop.txt) is applied further down after
+# the PS profile and cmd.exe sections.
+log "Scoop (bootstrap)..."
+if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+  if ($DryRun) {
+    Write-Host "  would install Scoop to $HOME\scoop"
+  } else {
+    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Invoke-RestMethod get.scoop.sh | Invoke-Expression
+  }
+}
+
+# Python — via Scoop rather than winget. Scoop shims land in ~/scoop/shims and
+# are immediately active in the current session with no PATH refresh or restart
+# needed — which sidesteps both the Microsoft Store App Execution Alias stub
+# (answers Get-Command but exits non-zero when invoked) and the post-winget
+# PATH-staleness problem that bit us before. The stub check stays as a guard.
 $py = Get-Command python -ErrorAction SilentlyContinue
-# Guard against the Microsoft Store App Execution Alias stub: it satisfies
-# Get-Command but exits non-zero and prints a Store prompt when invoked with
-# arguments. Treat any python that fails --version as not found.
 if ($py) {
   $null = & $py.Source --version 2>&1
   if ($LASTEXITCODE -ne 0) { $py = $null }
 }
 if (-not $py) {
-  log "Python not found — installing via winget..."
-  if (Get-Command winget -ErrorAction SilentlyContinue) {
-    winget install --id Python.Python.3 -e --silent --accept-package-agreements --accept-source-agreements | Out-Null
+  if ($DryRun) {
+    Write-Host "  scoop install python"
+  } elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
+    log "Installing Python via Scoop..."
+    scoop install python *>$null
     $py = Get-Command python -ErrorAction SilentlyContinue
   }
   if (-not $py) {
-    Write-Host "Could not install Python automatically. Install Python 3 (winget install --id Python.Python.3 -e) and re-run." -ForegroundColor Red
+    Write-Host "Could not install Python. Run 'scoop install python' and re-run install.ps1." -ForegroundColor Red
     exit 1
   }
 }
@@ -161,18 +175,9 @@ if ($DryRun) {
   success "cmd.exe AutoRun configured"
 }
 
-# Scoop — bootstrap if not present, then ensure buckets and packages.
-# Scoop installs everything to ~/scoop with no UAC/admin required; developer
-# tools all live there now. See packages/scoop.txt.
-log "Scoop..."
-if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-  if ($DryRun) {
-    Write-Host "  would install Scoop to $HOME\scoop"
-  } else {
-    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-    Invoke-RestMethod get.scoop.sh | Invoke-Expression
-  }
-}
+# Scoop packages — Scoop was bootstrapped and Python installed earlier; now
+# apply buckets and the full package list. See packages/scoop.txt.
+log "Scoop packages..."
 if (Get-Command scoop -ErrorAction SilentlyContinue) {
   $scoopEntries = Get-Content "$DOTFILES\packages\scoop.txt" |
     ForEach-Object { $_.Trim() } |
@@ -207,7 +212,7 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     }
   }
 } else {
-  warn "scoop not found after bootstrap attempt — skipping packages/scoop.txt"
+  warn "scoop not available — skipping packages/scoop.txt"
 }
 
 # Winget packages — now just system-level installs that need OS integration
