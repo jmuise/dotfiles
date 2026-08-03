@@ -102,6 +102,14 @@ if ([Environment]::GetEnvironmentVariable("HOME", "User") -ne $env:USERPROFILE) 
 # (buckets + remaining packages from scoop.txt) is applied further down after
 # the PS profile and cmd.exe sections.
 log "Scoop (bootstrap)..."
+# Ensure ~/scoop/shims is on the current session's PATH. The Scoop installer
+# updates the user PATH registry entry, but that doesn't retroactively update
+# $env:PATH in an already-running shell — so Get-Command scoop fails on the
+# second run in the same session even though Scoop is fully installed.
+$scoopShims = "$HOME\scoop\shims"
+if ((Test-Path $scoopShims) -and $env:PATH -notlike "*$scoopShims*") {
+  $env:PATH = "$scoopShims;$env:PATH"
+}
 if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
   if ($DryRun) {
     Write-Host "  would install Scoop to $HOME\scoop"
