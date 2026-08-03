@@ -119,34 +119,35 @@ if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
   }
 }
 
-# Python — via Scoop rather than winget. Scoop shims land in ~/scoop/shims and
-# are immediately active in the current session with no PATH refresh or restart
-# needed — which sidesteps both the Microsoft Store App Execution Alias stub
-# (answers Get-Command but exits non-zero when invoked) and the post-winget
-# PATH-staleness problem that bit us before. The stub check stays as a guard.
-$py = Get-Command python -ErrorAction SilentlyContinue
-if ($py) {
-  $null = & $py.Source --version 2>&1
-  if ($LASTEXITCODE -ne 0) { $py = $null }
+# Python — resolved by shim path, not Get-Command. The Microsoft Store App
+# Execution Alias stub writes to the console via Win32 WriteConsole (bypassing
+# PowerShell's *>$null redirect) and Get-Command's result cache can return the
+# stub even after Scoop's shim is on PATH. Checking the shim file directly
+# avoids both problems.
+$pyPath = $null
+if (Test-Path "$scoopShims\python.exe") {
+  $pyPath = "$scoopShims\python.exe"
 }
-if (-not $py) {
+if (-not $pyPath) {
+  # Scoop shim not present yet — install Python, then point at the shim.
   if ($DryRun) {
     Write-Host "  scoop install python"
+    $pyPath = "$scoopShims\python.exe"
   } elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
     log "Installing Python via Scoop..."
-    scoop install python *>$null
-    $py = Get-Command python -ErrorAction SilentlyContinue
+    scoop install python
+    if (Test-Path "$scoopShims\python.exe") { $pyPath = "$scoopShims\python.exe" }
   }
-  if (-not $py) {
-    Write-Host "Could not install Python. Run 'scoop install python' and re-run install.ps1." -ForegroundColor Red
-    exit 1
-  }
+}
+if (-not $pyPath) {
+  Write-Host "Could not find or install Python. Run 'scoop install python' and re-run install.ps1." -ForegroundColor Red
+  exit 1
 }
 
 # ── cross-platform install (shared logic) ─────────────────────────────────────
 $pyArgs = @("$DOTFILES\install.py")
 if ($DryRun) { $pyArgs += "--dry-run" }
-& $py.Source @pyArgs
+& $pyPath @pyArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # ── PowerShell profile ────────────────────────────────────────────────────────
