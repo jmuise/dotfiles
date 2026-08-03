@@ -1,32 +1,7 @@
-# winget packages — Windows
-# Install: Get-Content packages\winget.txt | Where-Object { $_ -notmatch '^#|^\s*$' } | ForEach-Object { winget install --id $_ -e --silent }
+# winget packages — Windows (system-level installs that need OS integration)
+# Developer tools have moved to packages/scoop.txt.
+# PowerShell 7 and Python are bootstrapped earlier in install.ps1 via winget
+# before Scoop is available on a fresh machine.
 
-# Shell & terminal
-Microsoft.WindowsTerminal
-Microsoft.PowerShell
-Starship.Starship
-
-# Git
-Git.Git
-GitHub.GitHubDesktop
-GitHub.cli
-JesseDuffield.lazygit
-
-# Modern CLI (via scoop or winget where available)
-junegunn.fzf
-sxyazi.yazi
-BurntSushi.ripgrep.MSVC
-sharkdp.bat
-sharkdp.fd
-jqlang.jq
-dandavison.delta
-
-# Editor
-Neovim.Neovim
-Microsoft.VisualStudioCode
-
-# Containers
+# Containers — needs WSL2 kernel integration, not suitable for Scoop
 Docker.DockerDesktop
-
-# Fonts
-DEVCOM.JetBrainsMonoNerdFont

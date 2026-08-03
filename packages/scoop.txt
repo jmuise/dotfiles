@@ -1,0 +1,31 @@
+# scoop packages — Windows (userspace, no admin required)
+# Scoop installs everything to ~/scoop — no UAC prompts, no system pollution.
+# install.ps1 bootstraps Scoop and applies this list automatically.
+# Update a package: scoop update <name>
+# Update everything:  scoop update *
+
+# Shell & terminal
+main/pwsh
+main/starship
+extras/windows-terminal
+
+# Git & version control
+main/git
+main/gh
+main/lazygit
+
+# Modern CLI replacements
+main/fzf
+main/ripgrep
+main/bat
+main/fd
+main/jq
+main/delta
+main/yazi
+
+# Editor
+main/neovim
+extras/vscode
+
+# Fonts
+nerd-fonts/JetBrainsMono-NF

@@ -97,8 +97,10 @@ if ([Environment]::GetEnvironmentVariable("HOME", "User") -ne $env:USERPROFILE) 
   success "HOME already set to $env:USERPROFILE"
 }
 
-# Ensure Python 3 is available — winget install if not (Python is already in
-# packages/winget.txt, but that loop runs after this block).
+# Ensure Python 3 is available — winget install if not. Python is intentionally
+# not in packages/scoop.txt because Scoop itself hasn't been installed yet at
+# this point in the script; the bootstrap order is PS7 → Python → install.py →
+# Scoop. Scoop's python can be installed later if a side-by-side version is needed.
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) {
   log "Python not found — installing via winget..."
@@ -152,28 +154,68 @@ if ($DryRun) {
   success "cmd.exe AutoRun configured"
 }
 
-# Winget packages — pins to packages/winget.lock.json when an entry exists
-# there so a fresh machine matches the last captured version rather than
-# whatever is newest today; unlocked entries fall back to latest.
+# Scoop — bootstrap if not present, then ensure buckets and packages.
+# Scoop installs everything to ~/scoop with no UAC/admin required; developer
+# tools all live there now. See packages/scoop.txt.
+log "Scoop..."
+if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+  if ($DryRun) {
+    Write-Host "  would install Scoop to $HOME\scoop"
+  } else {
+    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Invoke-RestMethod get.scoop.sh | Invoke-Expression
+  }
+}
+if (Get-Command scoop -ErrorAction SilentlyContinue) {
+  $scoopEntries = Get-Content "$DOTFILES\packages\scoop.txt" |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -and $_ -notmatch '^#' }
+
+  # Add any non-main buckets referenced in scoop.txt
+  $bucketsDir = "$HOME\scoop\buckets"
+  $installedBuckets = if (Test-Path $bucketsDir) {
+    Get-ChildItem $bucketsDir -Directory | Select-Object -ExpandProperty Name
+  } else { @() }
+  $bucketsNeeded = $scoopEntries |
+    Where-Object { $_ -match '/' } |
+    ForEach-Object { ($_ -split '/')[0] } |
+    Sort-Object -Unique |
+    Where-Object { $_ -ne 'main' -and $installedBuckets -notcontains $_ }
+  foreach ($bucket in $bucketsNeeded) {
+    if ($DryRun) { Write-Host "  scoop bucket add $bucket" }
+    else {
+      scoop bucket add $bucket *>$null
+      success "Scoop bucket added: $bucket"
+    }
+  }
+
+  # Install packages (scoop is idempotent — exits 0 if already installed)
+  foreach ($entry in $scoopEntries) {
+    $pkgName = if ($entry -match '/') { ($entry -split '/')[1] } else { $entry }
+    if ($DryRun) { Write-Host "  scoop install $entry" }
+    else {
+      scoop install $entry *>$null
+      if ($LASTEXITCODE -eq 0) { success "Scoop: $pkgName" }
+      else { warn "scoop install failed for $entry (exit $LASTEXITCODE)" }
+    }
+  }
+} else {
+  warn "scoop not found after bootstrap attempt — skipping packages/scoop.txt"
+}
+
+# Winget packages — now just system-level installs that need OS integration
+# (currently only Docker Desktop). Developer tools moved to Scoop above.
 log "Winget packages..."
 if (Get-Command winget -ErrorAction SilentlyContinue) {
   $wingetIds = Get-Content "$DOTFILES\packages\winget.txt" |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -and $_ -notmatch '^#' }
-  $wingetLockPath = "$DOTFILES\packages\winget.lock.json"
-  $wingetLocked = @{}
-  if (Test-Path $wingetLockPath) {
-    (Get-Content $wingetLockPath -Raw | ConvertFrom-Json) | ForEach-Object { $wingetLocked[$_.id] = $_.version }
-  }
   foreach ($id in $wingetIds) {
     winget list --id $id -e --accept-source-agreements *>$null
     if ($LASTEXITCODE -eq 0) { continue }
-    $versionArgs = @()
-    if ($wingetLocked.ContainsKey($id)) { $versionArgs = @("-v", $wingetLocked[$id]) }
-    if ($DryRun) {
-      Write-Host "  winget install --id $id -e $($versionArgs -join ' ')"
-    } else {
-      winget install --id $id -e --silent --accept-package-agreements --accept-source-agreements @versionArgs | Out-Null
+    if ($DryRun) { Write-Host "  winget install --id $id -e" }
+    else {
+      winget install --id $id -e --silent --accept-package-agreements --accept-source-agreements | Out-Null
       if ($LASTEXITCODE -eq 0) { success "Installed $id" } else { warn "winget install failed for $id (exit $LASTEXITCODE)" }
     }
   }
@@ -181,24 +223,14 @@ if (Get-Command winget -ErrorAction SilentlyContinue) {
   warn "winget not found — skipping packages/winget.txt install"
 }
 
-# Scheduled winget update check — proposes version bumps as commits on a
-# `winget-updates` branch for review, weekly.
-log "Scheduled winget update check..."
+# Scheduled winget update check — was registered by earlier versions of this
+# script when winget.txt covered all packages. Now that developer tools live
+# in Scoop (updated via `scoop update *`), the task is unnecessary. Remove it
+# if it's still registered from a previous run.
 $wingetTaskName = "dotfiles-winget-check-updates"
-$wingetTaskArgs = "-NoLogo -NoProfile -File `"$DOTFILES\packages\winget-check-updates.ps1`""
-if ($DryRun) {
-  Write-Host "  schedule: $wingetTaskName (weekly, Mon 9am) -> pwsh.exe $wingetTaskArgs"
-} else {
-  $action   = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument $wingetTaskArgs
-  $trigger  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At "09:00"
-  $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
-  if (Get-ScheduledTask -TaskName $wingetTaskName -ErrorAction SilentlyContinue) {
-    Set-ScheduledTask -TaskName $wingetTaskName -Action $action -Trigger $trigger -Settings $settings | Out-Null
-  } else {
-    Register-ScheduledTask -TaskName $wingetTaskName -Action $action -Trigger $trigger -Settings $settings `
-      -Description "Checks packages/winget.txt for available updates and proposes them as a commit on winget-updates for review." | Out-Null
-  }
-  success "Scheduled weekly winget update check ($wingetTaskName)"
+if (-not $DryRun -and (Get-ScheduledTask -TaskName $wingetTaskName -ErrorAction SilentlyContinue)) {
+  Unregister-ScheduledTask -TaskName $wingetTaskName -Confirm:$false
+  success "Removed stale scheduled task: $wingetTaskName (winget update check retired — use 'scoop update *' instead)"
 }
 
 # Logon sync — safety net that re-applies this installer at every logon in
