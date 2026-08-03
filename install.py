@@ -9,10 +9,16 @@ Usage (via wrappers):
 """
 
 import argparse
+import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+import urllib.request
+import zipfile
 from pathlib import Path
 
 DOTFILES = Path(__file__).parent.resolve()
@@ -230,6 +236,29 @@ link(DOTFILES / "starship" / "starship.toml", HOME / ".config" / "starship.toml"
 
 # ── tmux ──────────────────────────────────────────────────────────────────────
 link(DOTFILES / "tmux" / ".tmux.conf", HOME / ".tmux.conf")
+
+# ── neovim ────────────────────────────────────────────────────────────────────
+log("Neovim...")
+if is_linux and not shutil.which("nvim"):
+    if DRY_RUN:
+        print("  would install neovim to ~/.local (GitHub releases tarball)")
+    else:
+        _arch = "x86_64" if platform.machine() == "x86_64" else "arm64"
+        _url  = f"https://github.com/neovim/neovim/releases/latest/download/nvim-linux-{_arch}.tar.gz"
+        log(f"Installing neovim ({_arch})...")
+        try:
+            with tempfile.TemporaryDirectory() as _tmp:
+                _tar = Path(_tmp) / "nvim.tar.gz"
+                urllib.request.urlretrieve(_url, _tar)
+                (HOME / ".local").mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    ["tar", "xzf", str(_tar), "--strip-components=1", "-C", str(HOME / ".local")],
+                    check=True,
+                )
+            success("neovim installed")
+        except Exception as _e:
+            warn(f"neovim install skipped: {_e}")
+link(DOTFILES / "nvim", HOME / ".config" / "nvim")
 
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")

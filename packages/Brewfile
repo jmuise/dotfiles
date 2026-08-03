@@ -27,6 +27,9 @@ brew "gh"           # GitHub CLI
 brew "lazygit"      # TUI git client
 cask "git-credential-manager"  # credential.helper - see secrets/README.md
 
+# ── editor ────────────────────────────────────────────────────────────────────
+brew "neovim"
+
 # ── dev tools ─────────────────────────────────────────────────────────────────
 brew "curl"
 brew "wget"

@@ -1,0 +1,1 @@
+-- Extends LazyVim defaults (lazyvim/config/autocmds.lua has the base set).
