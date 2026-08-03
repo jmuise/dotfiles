@@ -260,6 +260,36 @@ if is_linux and not shutil.which("nvim"):
             warn(f"neovim install skipped: {_e}")
 link(DOTFILES / "nvim", HOME / ".config" / "nvim")
 
+# ── lazygit ───────────────────────────────────────────────────────────────────
+log("lazygit...")
+if is_linux and not shutil.which("lazygit"):
+    if DRY_RUN:
+        print("  would install lazygit to ~/.local/bin (GitHub releases)")
+    else:
+        _arch = "x86_64" if platform.machine() == "x86_64" else "arm64"
+        log("Installing lazygit...")
+        try:
+            with urllib.request.urlopen(
+                "https://api.github.com/repos/jesseduffield/lazygit/releases/latest"
+            ) as _r:
+                _ver = json.loads(_r.read())["tag_name"].lstrip("v")
+            _url = (
+                f"https://github.com/jesseduffield/lazygit/releases/download/v{_ver}/"
+                f"lazygit_{_ver}_Linux_{_arch}.tar.gz"
+            )
+            with tempfile.TemporaryDirectory() as _tmp:
+                _tar = Path(_tmp) / "lazygit.tar.gz"
+                urllib.request.urlretrieve(_url, _tar)
+                subprocess.run(["tar", "xzf", str(_tar), "-C", _tmp, "lazygit"], check=True)
+                _bin = HOME / ".local" / "bin"
+                _bin.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(Path(_tmp) / "lazygit"), str(_bin / "lazygit"))
+                (_bin / "lazygit").chmod(0o755)
+            success(f"lazygit v{_ver} installed")
+        except Exception as _e:
+            warn(f"lazygit install skipped: {_e}")
+link(DOTFILES / "lazygit" / "config.yml", HOME / ".config" / "lazygit" / "config.yml")
+
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")
 ssh_dir = HOME / ".ssh"
