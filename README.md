@@ -62,7 +62,8 @@ brew bundle --file=packages/Brewfile
 # Ubuntu/Debian
 xargs sudo apt-get install -y < packages/apt.txt
 
-# Windows
+# Windows — install.ps1 already does this (pinning to winget.lock.json where
+# an entry exists); the one-liner below is only for running it standalone.
 Get-Content packages\winget.txt |
   Where-Object { $_ -notmatch '^#|^\s*$' } |
   ForEach-Object { winget install --id $_ -e --silent }

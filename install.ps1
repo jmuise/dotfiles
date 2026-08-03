@@ -255,6 +255,40 @@ if ($DryRun) {
   success "cmd.exe AutoRun configured"
 }
 
+# Winget packages — packages/winget.txt was previously just documentation
+# (a comment telling you to run the one-liner yourself) and the scheduled
+# check below only proposes *version bumps* for packages already installed,
+# so on a fresh machine nothing in the list — including Starship — ever
+# actually got installed. Pins to packages/winget.lock.json when an entry
+# exists there, so a fresh machine matches the last version
+# packages/winget-lock.ps1 captured rather than whatever's newest today;
+# unlocked entries (or the file being absent) fall back to latest.
+log "Winget packages..."
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+  $wingetIds = Get-Content "$DOTFILES\packages\winget.txt" |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -and $_ -notmatch '^#' }
+  $wingetLockPath = "$DOTFILES\packages\winget.lock.json"
+  $wingetLocked = @{}
+  if (Test-Path $wingetLockPath) {
+    (Get-Content $wingetLockPath -Raw | ConvertFrom-Json) | ForEach-Object { $wingetLocked[$_.id] = $_.version }
+  }
+  foreach ($id in $wingetIds) {
+    winget list --id $id -e --accept-source-agreements *>$null
+    if ($LASTEXITCODE -eq 0) { continue }
+    $versionArgs = @()
+    if ($wingetLocked.ContainsKey($id)) { $versionArgs = @("-v", $wingetLocked[$id]) }
+    if ($DryRun) {
+      Write-Host "  winget install --id $id -e $($versionArgs -join ' ')"
+    } else {
+      winget install --id $id -e --silent --accept-package-agreements --accept-source-agreements @versionArgs | Out-Null
+      if ($LASTEXITCODE -eq 0) { success "Installed $id" } else { warn "winget install failed for $id (exit $LASTEXITCODE)" }
+    }
+  }
+} else {
+  warn "winget not found — skipping packages/winget.txt install"
+}
+
 # Scheduled winget update check — proposes version bumps as commits on a
 # `winget-updates` branch for review, weekly. See packages/winget-check-updates.ps1.
 log "Scheduled winget update check..."

@@ -252,9 +252,12 @@ link "$DOTFILES_DIR/shell/.zprofile"   "$HOME/.zprofile"
 log "Starship..."
 if is_linux && ! command -v starship &>/dev/null; then
   if $DRY_RUN; then
-    printf '  would install starship (curl https://starship.rs/install.sh)\n'
+    printf '  would install starship to ~/.local/bin (curl https://starship.rs/install.sh)\n'
   else
-    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes 2>/dev/null \
+    # -b installs into ~/.local/bin (already on PATH via exports.sh) so this
+    # never needs sudo/root - the installer's default /usr/local/bin does.
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes -b "$HOME/.local/bin" 2>/dev/null \
       || warn "starship install skipped (no curl or offline)"
   fi
 fi
