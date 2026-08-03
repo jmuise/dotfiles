@@ -59,6 +59,15 @@
 [credential "https://dotfiles-identity.local"]
 	provider = generic
 
+# Carries `gh`'s own auth token into devcontainers via the same forwarding
+# channel - a devcontainer has no persisted `gh auth login` session of its
+# own (secrets/README.md's "already handled by OS keyring" claim only holds
+# on a machine gh was actually logged into), so install.sh pushes it here
+# from the host/WSL and pulls it back inside a devcontainer, same pattern as
+# dotfiles-identity.local above. "provider = generic" for the same reason.
+[credential "https://dotfiles-gh.local"]
+	provider = generic
+
 [alias]
 	# status / log
 	s    = status -sb

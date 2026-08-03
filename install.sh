@@ -202,6 +202,22 @@ elif ! is_devcontainer; then
     | git credential approve 2>/dev/null || true
 fi
 
+# gh's own token, pushed through the same forwarding channel so a
+# devcontainer opened from this machine can pull it - see GH_HOST's use
+# below and secrets/README.md. Host/WSL only: this is a local, non-network
+# read of gh's already-persisted session (same call shell/exports.sh and
+# shell/doctor.sh already make), a no-op if gh isn't installed/authenticated
+# here yet.
+GH_HOST="dotfiles-gh.local"
+if ! is_devcontainer && command -v gh &>/dev/null; then
+  gh_token_to_push="$(gh auth token 2>/dev/null || true)"
+  if [[ -n "$gh_token_to_push" ]]; then
+    printf 'protocol=https\nhost=%s\nusername=%s\npassword=%s\n' "$GH_HOST" "gh-cli" "$gh_token_to_push" \
+      | git credential approve 2>/dev/null || true
+  fi
+  unset gh_token_to_push
+fi
+
 # git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
 # whenever git pull/rebase/checkout change dotfiles files. Runs after the
@@ -419,6 +435,28 @@ if is_devcontainer; then
       fi
     else
       warn "Credential forwarding not confirmed for Claude Code token - new shells won't export it automatically. See secrets/README.md."
+    fi
+  fi
+
+  # gh token, same forwarding channel and same reason as the Claude Code
+  # block above: `gh auth login`'s persisted session lives on the host that
+  # ran it, never inside a fresh devcontainer filesystem, so nothing else
+  # would ever populate GH_TOKEN in here. Confirmed live: both `gh auth
+  # token` and `gh auth status` honor a GH_TOKEN env var directly (no `gh
+  # auth login` needed inside the container), so exporting it in
+  # shell/exports.sh is sufficient once this sentinel confirms forwarding
+  # works.
+  GH_SENTINEL="$CACHE_DIR/gh-token.configured"
+  if [[ ! -f "$GH_SENTINEL" ]] && command -v git &>/dev/null && command -v timeout &>/dev/null && ! $DRY_RUN; then
+    log "Checking gh credential forwarding..."
+    GH_FORWARDED="$(timeout 5 git credential fill 2>/dev/null <<< "protocol=https"$'\n'"host=$GH_HOST"$'\n'"username=gh-cli" \
+      | sed -n 's/^password=//p')" || true
+    if [[ -n "$GH_FORWARDED" ]]; then
+      mkdir -p "$CACHE_DIR"
+      touch "$GH_SENTINEL"
+      log "gh credential forwarding confirmed - GH_TOKEN will be exported automatically in new shells."
+    else
+      warn "Credential forwarding not confirmed for gh token - new shells won't export GH_TOKEN automatically. Run 'gh auth login' on the host and rebuild, or inside this container directly. See secrets/README.md."
     fi
   fi
 fi

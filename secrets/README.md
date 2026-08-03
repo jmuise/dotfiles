@@ -11,7 +11,7 @@ everything:
 | Tool | Where its token lives | How shell init gets it |
 |------|------------------------|-------------------------|
 | `git` | Already handled - your OS credential store (Windows Credential Manager via Git Credential Manager, macOS Keychain, Linux libsecret), wired up by `git-credential-manager` itself. Nothing this repo needs to do. | N/A |
-| `gh` | Already handled - `gh auth login`'s own persisted session (OS keyring). | `gh auth token` in `shell/exports.sh` / `powershell/profile.ps1` |
+| `gh` | Already handled on the host/WSL - `gh auth login`'s own persisted session (OS keyring). A devcontainer has no such session of its own, so its token rides the same forwarding channel as below, under `dotfiles-gh.local`. | `gh auth token` in `shell/exports.sh` / `powershell/profile.ps1`, falling back to credential forwarding if that's empty |
 | `claude` (Claude Code) | The one real gap: `claude setup-token` prints a long-lived token but doesn't persist it anywhere. | Stored via `git-credential-manager` under a synthetic host (`dotfiles-secrets.local`), retrieved the same way `git credential fill` retrieves a real one |
 
 The synthetic-host trick: `git credential approve`/`fill` is a generic
@@ -123,6 +123,24 @@ this once (with a timeout, so a container where forwarding *isn't* set up
 fails fast instead of turning into a slow probe on every future shell) and
 writes the sentinel file itself if it succeeds - no manual step needed
 beyond having already run `secrets/setup-claude-token.sh` on the host.
+
+**`gh` needs the same forwarding, not just Claude's token.** `gh auth login`'s
+session lives in `~/.config/gh` on whatever machine ran it - a fresh
+devcontainer filesystem never has it, so `gh auth token` there returns empty
+until something forwards it in. `install.sh` pushes the host/WSL's
+`gh auth token` output into the credential-forwarding channel under a second
+synthetic host (`dotfiles-gh.local`), the same way it does for git identity
+under `dotfiles-identity.local` - see `git/.gitconfig.template`. Inside a
+devcontainer, `install.sh`'s devcontainer-extras step confirms that
+forwarding works and writes a `gh-token.configured` sentinel (mirroring the
+Claude Code token's sentinel exactly), which `shell/exports.sh` then checks
+before falling back to a forwarded `git credential fill` when `gh auth token`
+comes back empty. No `gh auth login` is needed inside the container at all -
+confirmed live that both `gh auth token` and `gh auth status` honor a
+`GH_TOKEN` env var directly, so exporting it is enough. If the host has never
+run `gh auth login`, there's nothing to forward and `gh` stays unauthenticated
+in every devcontainer opened from it until it has - `shell/doctor.sh` flags
+this at shell startup.
 
 **The VS Code Claude Code *extension* (not just the CLI) can come up looking
 unauthenticated on first container start, even once `CLAUDE_CODE_OAUTH_TOKEN`

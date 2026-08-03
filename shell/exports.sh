@@ -90,6 +90,21 @@ fi
 
 if [[ -z "${GH_TOKEN:-}" ]] && command -v gh &>/dev/null; then
   _gh_token=$(gh auth token 2>/dev/null)
+  # A devcontainer has no persisted `gh auth login` session of its own, so
+  # fall back to the same credential-forwarding channel used for the Claude
+  # Code token above - install.sh pushes gh's token there from the host/WSL
+  # (see git/.gitconfig.template's dotfiles-gh.local block). Same sentinel
+  # gate reasoning as the Claude Code block: skip the lookup entirely until
+  # install.sh has confirmed forwarding works, since a probe against an
+  # unconfigured synthetic host isn't a fast no-op. Confirmed live: `gh auth
+  # token`/`gh auth status` both honor a GH_TOKEN env var directly, so no
+  # `gh auth login` is needed inside the container once this is exported.
+  if [[ -z "$_gh_token" ]] \
+     && [[ -f "$XDG_CACHE_HOME/dotfiles/gh-token.configured" ]] \
+     && command -v git &>/dev/null; then
+    _gh_token=$(printf 'protocol=https\nhost=dotfiles-gh.local\nusername=gh-cli\n' \
+      | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+  fi
   [[ -n "$_gh_token" ]] && export GH_TOKEN="$_gh_token"
   unset _gh_token
 fi

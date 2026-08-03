@@ -183,6 +183,19 @@ if ((-not $effectiveName) -or (-not $effectiveEmail)) {
   "protocol=https`nhost=dotfiles-identity.local`nusername=$effectiveName`npassword=$effectiveEmail`n" | git credential approve 2>$null
 }
 
+# gh's own token, pushed through the same forwarding channel so a
+# devcontainer opened from this Windows host can pull it (install.sh's
+# GH_HOST check) - a devcontainer has no persisted `gh auth login` session of
+# its own (secrets/README.md's "already handled by OS keyring" claim only
+# holds on a machine gh was actually logged into). No-op if gh isn't
+# installed/authenticated here yet.
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+  $ghTokenToPush = gh auth token 2>$null
+  if ($ghTokenToPush) {
+    "protocol=https`nhost=dotfiles-gh.local`nusername=gh-cli`npassword=$ghTokenToPush`n" | git credential approve 2>$null
+  }
+}
+
 # Git hooks — points this checkout at the repo-tracked hooks/ dir so
 # post-checkout/post-merge/post-rewrite re-run this installer automatically
 # whenever `git pull`/`git rebase`/`git checkout` change dotfiles files, in
