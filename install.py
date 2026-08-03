@@ -46,7 +46,7 @@ def link(src: Path, dst: Path):
     if dst.is_symlink():
         dst.unlink()
     elif dst.exists():
-        warn(f"Backing up {dst} → {dst}.bak"); dst.rename(str(dst) + ".bak")
+        warn(f"Backing up {dst} → {dst}.bak"); dst.replace(str(dst) + ".bak")
     dst.symlink_to(src)
     success(f"linked {dst}")
 
@@ -63,7 +63,7 @@ def render(content: str, dst: Path, marker: str):
         except OSError:
             existing = ""
         if not existing.startswith(marker):
-            warn(f"Backing up {dst} → {dst}.bak"); dst.rename(str(dst) + ".bak")
+            warn(f"Backing up {dst} → {dst}.bak"); dst.replace(str(dst) + ".bak")
     dst.write_text(content, encoding="utf-8")
     success(f"rendered {dst}")
 
