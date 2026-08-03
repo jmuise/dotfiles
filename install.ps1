@@ -102,6 +102,13 @@ if ([Environment]::GetEnvironmentVariable("HOME", "User") -ne $env:USERPROFILE) 
 # this point in the script; the bootstrap order is PS7 → Python → install.py →
 # Scoop. Scoop's python can be installed later if a side-by-side version is needed.
 $py = Get-Command python -ErrorAction SilentlyContinue
+# Guard against the Microsoft Store App Execution Alias stub: it satisfies
+# Get-Command but exits non-zero and prints a Store prompt when invoked with
+# arguments. Treat any python that fails --version as not found.
+if ($py) {
+  $null = & $py.Source --version 2>&1
+  if ($LASTEXITCODE -ne 0) { $py = $null }
+}
 if (-not $py) {
   log "Python not found — installing via winget..."
   if (Get-Command winget -ErrorAction SilentlyContinue) {
