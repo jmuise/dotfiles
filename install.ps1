@@ -219,9 +219,12 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     $pkgName = if ($entry -match '/') { ($entry -split '/')[1] } else { $entry }
     if ($DryRun) { Write-Host "  scoop install $entry" }
     else {
-      scoop install $entry *>$null
+      $scoopOut = scoop install $entry 2>&1
       if ($LASTEXITCODE -eq 0) { success "Scoop: $pkgName" }
-      else { warn "scoop install failed for $entry (exit $LASTEXITCODE)" }
+      else {
+        warn "scoop install failed for $entry (exit $LASTEXITCODE):"
+        $scoopOut | ForEach-Object { Write-Host "  $_" }
+      }
     }
   }
 } else {

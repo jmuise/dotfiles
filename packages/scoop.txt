@@ -28,7 +28,8 @@ main/python
 
 # Editor
 main/neovim
-extras/vscode
+# VS Code is managed by its own installer (or winget) — Scoop's vscode package
+# runs a post-install data-migration step that crashes when Code is running.
 
 # Fonts
 nerd-fonts/JetBrainsMono-NF
