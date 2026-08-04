@@ -1,3 +1,4 @@
 # Global instructions
 
 - When creating git commits, do not add a "Co-Authored-By: Claude ..." trailer (or similar attribution line) unless the user explicitly asks for it in that request.
+- For any multi-step engineering request — implementation work that will produce a commit/PR, span more than a trivial single-file fix, or benefit from an independent review before being called done — delegate to the `number-one` orchestrator subagent via the Agent tool rather than doing the decomposition, implementation, and self-review directly in the main session. `number-one` tracks the work, delegates to worker subagents, and keeps implementation separate from review by construction. Exceptions: quick read-only lookups/questions, one-line trivial fixes, or when the user explicitly asks for direct/inline handling.
