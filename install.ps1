@@ -214,19 +214,26 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     }
   }
 
-  # Install packages (scoop is idempotent — exits 0 if already installed)
+  # Install packages. Run from $HOME so dotfiles subdirectories (e.g. lazygit/)
+  # don't shadow package names — scoop resolves bare names against CWD first.
+  # Skip already-installed packages to avoid scoop's un-suppressable Write-Host
+  # WARN spam (scoop uses Write-Host which bypasses 2>&1 / *>$null capture).
+  Push-Location $HOME
   foreach ($entry in $scoopEntries) {
     $pkgName = if ($entry -match '/') { ($entry -split '/')[1] } else { $entry }
-    if ($DryRun) { Write-Host "  scoop install $entry" }
+    if ($DryRun) { Write-Host "  scoop install $entry"; continue }
+    if (Test-Path "$HOME\scoop\apps\$pkgName\current") {
+      success "Scoop: $pkgName"
+      continue
+    }
+    $scoopOut = scoop install $entry 2>&1
+    if ($LASTEXITCODE -eq 0) { success "Scoop: $pkgName" }
     else {
-      $scoopOut = scoop install $entry 2>&1
-      if ($LASTEXITCODE -eq 0) { success "Scoop: $pkgName" }
-      else {
-        warn "scoop install failed for $entry (exit $LASTEXITCODE):"
-        $scoopOut | ForEach-Object { Write-Host "  $_" }
-      }
+      warn "scoop install failed for $entry (exit $LASTEXITCODE):"
+      $scoopOut | ForEach-Object { Write-Host "  $_" }
     }
   }
+  Pop-Location
 } else {
   warn "scoop not available — skipping packages/scoop.txt"
 }
