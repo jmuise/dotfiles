@@ -67,8 +67,14 @@ def render(content: str, dst: Path, marker: str):
     dst.write_text(content, encoding="utf-8")
     success(f"rendered {dst}")
 
-def run(*cmd, **kw):
-    return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+_EMPTY = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+
+def run(*cmd, timeout=30, **kw):
+    try:
+        return subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        warn(f"Command timed out ({timeout}s): {' '.join(str(c) for c in cmd)}")
+        return _EMPTY
 
 def git_credential_fill(protocol, host, username=None):
     inp = f"protocol={protocol}\nhost={host}\n"
@@ -86,7 +92,10 @@ def git_credential_fill(protocol, host, username=None):
 def git_credential_approve(protocol, host, username, password):
     inp = f"protocol={protocol}\nhost={host}\nusername={username}\npassword={password}\n"
     try:
-        subprocess.run(["git", "credential", "approve"], input=inp, capture_output=True, text=True, timeout=5)
+        subprocess.run(
+            ["git", "-c", "credential.interactive=false", "credential", "approve"],
+            input=inp, capture_output=True, text=True, timeout=10,
+        )
     except Exception:
         pass
 
@@ -181,7 +190,7 @@ elif not is_devcontainer():
     git_credential_approve("https", IDENTITY_HOST, effective_name, effective_email)
 
 if not is_devcontainer() and shutil.which("gh"):
-    gh_token = run("gh", "auth", "token").stdout.strip()
+    gh_token = run("gh", "auth", "token", timeout=10).stdout.strip()
     if gh_token:
         git_credential_approve("https", GH_HOST, "gh-cli", gh_token)
         readback = git_credential_fill("https", GH_HOST, "gh-cli").get("password", "")
