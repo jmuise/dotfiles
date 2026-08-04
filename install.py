@@ -192,10 +192,14 @@ effective_email = run("git", "config", "--file", str(HOME / ".gitconfig"), "--ge
 if not effective_name or not effective_email:
     warn("No git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com "
          "(or edit ~/.gitconfig.local and re-run install).")
-elif not is_devcontainer():
+elif not is_devcontainer() and not is_windows:
+    # Push git identity into the credential store under a synthetic host so
+    # devcontainers can pull it via `git credential fill dotfiles-identity.local`.
+    # Skipped on Windows — GCM handles devcontainer credential forwarding natively
+    # and shows interactive dialogs for unrecognised hosts regardless of env flags.
     git_credential_approve("https", IDENTITY_HOST, effective_name, effective_email)
 
-if not is_devcontainer() and shutil.which("gh"):
+if not is_devcontainer() and not is_windows and shutil.which("gh"):
     gh_token = run("gh", "auth", "token", timeout=10).stdout.strip()
     if gh_token:
         git_credential_approve("https", GH_HOST, "gh-cli", gh_token)
