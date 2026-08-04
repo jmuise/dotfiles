@@ -12,7 +12,7 @@ extras/windows-terminal
 # Git & version control
 main/git
 main/gh
-main/lazygit
+lazygit
 
 # Modern CLI replacements
 main/fzf

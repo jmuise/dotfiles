@@ -214,6 +214,9 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     }
   }
 
+  # Refresh bucket manifests so newly added / moved packages are findable.
+  scoop update *>$null 2>&1
+
   # Install packages. Run from $HOME so dotfiles subdirectories (e.g. lazygit/)
   # don't shadow package names — scoop resolves bare names against CWD first.
   # Skip already-installed packages to avoid scoop's un-suppressable Write-Host
