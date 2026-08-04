@@ -374,6 +374,7 @@ claude_dir = HOME / ".claude"
 link(DOTFILES / "claude" / "CLAUDE.md",             claude_dir / "CLAUDE.md")
 link(DOTFILES / "claude" / "settings.json",          claude_dir / "settings.json")
 link(DOTFILES / "claude" / "statusline-command.sh",  claude_dir / "statusline-command.sh")
+link(DOTFILES / "claude" / "agents",                 claude_dir / "agents")
 
 # ── devcontainer extras ───────────────────────────────────────────────────────
 if is_devcontainer():
