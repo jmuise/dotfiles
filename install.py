@@ -76,14 +76,20 @@ def run(*cmd, timeout=30, **kw):
         warn(f"Command timed out ({timeout}s): {' '.join(str(c) for c in cmd)}")
         return _EMPTY
 
+def _no_gui_env():
+    e = os.environ.copy()
+    e["GCM_INTERACTIVE"] = "never"   # Git Credential Manager: suppress all GUI dialogs
+    e["GCM_NO_UI"] = "true"          # older GCM builds
+    return e
+
 def git_credential_fill(protocol, host, username=None):
     inp = f"protocol={protocol}\nhost={host}\n"
     if username:
         inp += f"username={username}\n"
     try:
         r = subprocess.run(
-            ["git", "-c", "credential.interactive=false", "credential", "fill"],
-            input=inp, capture_output=True, text=True, timeout=5,
+            ["git", "-c", "credential.interactive=never", "credential", "fill"],
+            input=inp, capture_output=True, text=True, timeout=5, env=_no_gui_env(),
         )
         return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
     except Exception:
@@ -93,8 +99,8 @@ def git_credential_approve(protocol, host, username, password):
     inp = f"protocol={protocol}\nhost={host}\nusername={username}\npassword={password}\n"
     try:
         subprocess.run(
-            ["git", "-c", "credential.interactive=false", "credential", "approve"],
-            input=inp, capture_output=True, text=True, timeout=10,
+            ["git", "-c", "credential.interactive=never", "credential", "approve"],
+            input=inp, capture_output=True, text=True, timeout=10, env=_no_gui_env(),
         )
     except Exception:
         pass
