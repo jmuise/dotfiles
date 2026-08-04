@@ -8,6 +8,7 @@ if (Get-Module -ListAvailable PSReadLine) {
   Set-PSReadLineOption -PredictionSource History
   Set-PSReadLineOption -PredictionViewStyle ListView
   Set-PSReadLineOption -EditMode Emacs
+  Set-PSReadLineOption -HistorySearchCursorMovesToEnd
   Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
   Set-PSReadLineKeyHandler -Key UpArrow   -Function HistorySearchBackward
   Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
