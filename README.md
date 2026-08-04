@@ -11,6 +11,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git) + a Windows PowerShell 5.1 shim that hands off to pwsh |
 | `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
+| `claude/` | Claude Code global config (`CLAUDE.md`, `settings.json`), plus `agents/` (the `number-one` orchestrator subagent) and `hooks/` (a `PreToolUse` guardrail blocking PR-merge/force-push commands) |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.template` (rendered to `~/.ssh/config`, no keys) |
@@ -108,6 +109,12 @@ Git identity comes along for free too: VS Code's Dev Containers "copy git config
 git-credential forwarding, since the latter is only confirmed to work for
 real git hosts, not the synthetic host `secrets/` uses for the Claude Code
 token (see [secrets/README.md](secrets/README.md)).
+
+## Claude Code
+
+`claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns.
+
+Number One can also grow the roster itself: when it identifies a recurring role (e.g. a "graphic-designer" or "devops-engineer" specialist), it's free to author a new subagent definition under `~/.claude/agents/`. Since that directory is symlinked straight into this repo's `claude/agents/`, new files it creates show up here under version control automatically — expect them to appear as untracked files from time to time, and review them like any other change before committing. It won't commit or push on your behalf.
 
 ## cmd.exe
 
@@ -296,6 +303,14 @@ dotfiles/
 │   ├── settings.json
 │   ├── keybindings.json
 │   └── extensions.txt
+├── claude/
+│   ├── CLAUDE.md
+│   ├── settings.json
+│   ├── statusline-command.sh
+│   ├── agents/
+│   │   └── number-one.md      ← orchestrator subagent, see below
+│   └── hooks/
+│       └── block-pr-merge.sh  ← PreToolUse guardrail: blocks gh pr merge / unsafe force-push
 ├── starship/
 │   └── starship.toml
 ├── tmux/
