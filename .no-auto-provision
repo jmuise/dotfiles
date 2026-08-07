@@ -1,0 +1,14 @@
+Marker file: do not auto-provision this repo.
+
+Its presence at the repo root tells agent tooling (see the `number-one` agent's
+standing order 1) to skip the automatic "fresh project" sequence — git init,
+generating a devcontainer/Dockerfile or k8s manifests, building the image, and
+relaunching the session inside a container.
+
+This repo qualifies because it configures the host machine itself. Its contents
+are installed onto the machine rather than run inside a container, and tasks
+here legitimately need host access (e.g. /mnt/c, wsl.exe, ~/.claude). Wrapping
+it in a container would be counterproductive and would break that access.
+
+This is a general convention, not a dotfiles-specific one. Any repo whose job is
+configuring the host it lives on can drop this file at its root to opt out.

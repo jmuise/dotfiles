@@ -8,7 +8,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 |------|-------------------|
 | `git/` | `.gitconfig` with aliases, delta diff, sane push/pull defaults |
 | `shell/` | `.zshrc`, `.bashrc`, shared `aliases.sh` and `exports.sh` |
-| `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git) + a Windows PowerShell 5.1 shim that hands off to pwsh |
+| `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git, `claude` → WSL forwarding) + a Windows PowerShell 5.1 shim that hands off to pwsh |
 | `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
 | `claude/` | Claude Code global config (`CLAUDE.md`, `settings.json`), plus `agents/` (the `number-one` orchestrator subagent) and `hooks/` (a `PreToolUse` guardrail blocking PR-merge/force-push commands) |
@@ -115,6 +115,112 @@ token (see [secrets/README.md](secrets/README.md)).
 `claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns.
 
 Number One can also grow the roster itself: when it identifies a recurring role (e.g. a "graphic-designer" or "devops-engineer" specialist), it's free to author a new subagent definition under `~/.claude/agents/`. Since that directory is symlinked straight into this repo's `claude/agents/`, new files it creates show up here under version control automatically — expect them to appear as untracked files from time to time, and review them like any other change before committing. It won't commit or push on your behalf.
+
+### `claude` on native Windows → WSL
+
+The Claude Code install that's actually kept current lives **inside WSL**. So
+that muscle memory still works from the Windows side, `powershell/profile.ps1`
+defines a `claude` **function** that starts a session inside Debian, in the
+translated working directory (`C:\Users\jerem\code\foo` →
+`/mnt/c/Users/jerem/code/foo`), with the exit code handed back to the caller.
+
+**What's covered — and what isn't.** The function is the only forwarding
+mechanism, so it applies exactly where the profile is loaded:
+
+| Context | What `claude` does |
+|---------|-------------------|
+| Interactive PowerShell 7 with the profile loaded (Windows Terminal, the VS Code integrated terminal) | Forwards into WSL. Functions always outrank a PATH lookup, so this wins |
+| Raw `cmd.exe`, `pwsh -NoProfile`, VS Code tasks, npm scripts — anything that spawns `claude` as a child process | **Not intercepted.** Falls through to the still-installed native `%USERPROFILE%\.local\bin\claude.exe`, i.e. native Windows Claude Code, not WSL |
+
+That leftover `claude.exe` is deliberately being left in place for now. If it's
+ever deleted, `claude` in those un-intercepted contexts simply won't be found —
+nothing else will pick it up.
+
+**Why there's no `.cmd` shim.** An earlier version of this repo also shipped a
+`windows/claude.cmd`, installed onto the user PATH by `install.ps1`, to cover
+cmd.exe and profile-less PowerShell. It was **removed, not patched**, because
+it was command-injectable: cmd.exe re-scans a batch file's command line after
+`%*` is substituted, and it has no argument escape (`\"` is not honoured — every
+literal `"` just flips quote state), so a `&`, `|` or `>` inside an argument
+could break out and run arbitrary Windows commands. The same re-scan silently
+expanded `%VAR%` in arguments, which would have exposed
+`CLAUDE_CODE_OAUTH_TOKEN`. There is no way to make a batch-file wrapper safe
+here — **do not reintroduce one.** `install.ps1` deletes the previously
+installed copy and drops its PATH entry on the next run. The PowerShell function
+is not affected: it calls `wsl.exe` (a real `.exe`) directly and builds a real
+argv, with no cmd.exe anywhere in the chain.
+
+Other deliberate choices worth knowing about:
+
+- **Arguments are passed as argv, never interpolated.** The function runs
+  `wsl.exe -d Debian -e bash -lc <fixed script> claude <args…>`, so the script
+  text is a constant and every user argument arrives as `$1`, `$2`, … — nothing
+  a user types can be re-parsed as shell syntax. Verified for spaces, quotes,
+  `&`, `|`, `%`, `!`, backslash paths and empty strings.
+- **`wsl.exe` by absolute path.** `$env:SystemRoot\System32\wsl.exe`, not a PATH
+  lookup, so the forwarding can't itself be hijacked by a `wsl.exe` earlier on
+  PATH. If that file is missing, the function isn't defined at all.
+- **No `--cd`.** `wsl.exe` already translates the caller's working directory
+  (including `\\wsl.localhost\Debian\…` → the native distro path) and falls back
+  to the Linux home directory when a path has no WSL mapping, e.g. a network
+  drive. An explicit `--cd` would turn that graceful fallback into a hard
+  `Wsl/ERROR_PATH_NOT_FOUND`.
+- **A login shell plus an explicit PATH prepend.** `bash -lc` picks up
+  `/etc/profile.d`, but isn't enough on its own: `~/.bashrc` returns early when
+  non-interactive and `~/.profile` is skipped whenever `~/.bash_profile` exists,
+  so `~/.local/bin` and `~/bin` are prepended explicitly (with an `nvm` fallback
+  if Claude was installed through npm).
+
+Set `CLAUDE_WSL_DISTRO` to target a distro other than `Debian`. The function
+only speaks up in genuinely broken situations — WSL absent, distro missing, or
+Claude Code not installed inside the distro — and refuses to run a `/mnt/…`
+Windows `claude` from inside WSL so it can't recurse into itself.
+
+## Derived checkouts (pull-only mirrors)
+
+**Every checkout fast-forwards itself before it relinks anything.**
+`install.ps1` and `install.sh` both run `git pull --ff-only origin` against the
+checkout they were launched from. A machine you only ever *run* the installer
+on therefore converges on whatever was last pushed, without anyone having to
+remember to pull first — which matters most for checkouts nobody edits.
+
+**`--ff-only` is the entire enforcement mechanism.** If a checkout has commits
+`origin` doesn't, the pull fails, the installer prints a loud warning and
+continues with the relinking. Nothing is reset, merged, rebased, stashed or
+discarded, ever. A non-fast-forward means someone edited a checkout that was
+supposed to be derived, and that's a human's problem to resolve — not something
+a provisioning script should decide at logon time. There is deliberately
+nothing stronger: no commit-blocking hook, no read-only file attributes. Refuse
+and warn is enough. (An unreachable remote fails the same way; the checkout is
+then simply stale, which is harmless.)
+
+**Why a WSL-driven Windows box still needs a real checkout on local disk.**
+When all the editing happens inside WSL it's tempting to keep exactly one
+checkout there and point Windows at it over `\\wsl.localhost\…`. That doesn't
+work. Windows refuses to execute an unsigned script from a UNC path, so a
+UNC-hosted profile fails with `PSSecurityException` on every new shell. And
+the Windows-native integrations `install.ps1` sets up all bake in an
+**absolute path** to whatever checkout the installer ran from:
+
+| Integration | Points at |
+|-------------|-----------|
+| PowerShell 7 profile symlink (`$PROFILE`) | `powershell/profile.ps1` |
+| Windows PowerShell 5.1 profile symlink (`Documents\WindowsPowerShell\…`) | `powershell/profile.legacy.ps1` |
+| `DOTFILES_DIR` user environment variable | the checkout root — read by `cmd\init.cmd` |
+| cmd.exe AutoRun key (`HKCU\Software\Microsoft\Command Processor`) | `cmd\init.cmd` |
+| Startup-folder VBS launcher (`dotfiles-install-at-logon.vbs`) | `install.ps1` |
+
+So the Windows side keeps its own checkout on local disk, and that checkout is
+exactly the derived mirror described above: edits happen in the primary
+checkout and are pushed from there, and the installer fast-forwards the mirror
+before relinking.
+
+**Learned the hard way.** A consolidation pass once renamed that checkout aside
+without checking what pointed into it, and all five integrations broke at once
+and silently — no error anyone saw, just a profile that stopped loading and a
+logon sync that failed every login. Moving or renaming a checkout that Windows
+integrations point at breaks all of them, quietly; treat its location as
+load-bearing and re-run `install.ps1` if it ever has to change.
 
 ## cmd.exe
 
@@ -248,8 +354,10 @@ happens automatically; see [Keeping things in sync](#keeping-things-in-sync).
 ## Keeping things in sync
 
 Editing `git/.gitconfig.template` (or anything else in this repo) doesn't
-take effect anywhere until the installer re-runs. Re-running by hand after
-every edit gets old fast, so two things trigger it automatically:
+take effect anywhere until the installer re-runs — on the machine whose
+checkout you edited *and* on every other machine, once the change reaches it.
+Re-running by hand after every edit gets old fast, so two things trigger the
+installer automatically, and the installer pulls for itself once it starts:
 
 1. **Git hooks** (`post-checkout`, `post-merge`, `post-rewrite`) — the
    installer points this checkout at the repo-tracked `hooks/` dir via
@@ -267,9 +375,27 @@ every edit gets old fast, so two things trigger it automatically:
    Scheduler persistence, a common hardening measure) even from an elevated
    prompt, while a file in Startup needs no special privilege.
 
-Both paths pass `-SkipWSL` to keep automatic runs fast and non-interactive —
+Both of those pass `-SkipWSL` to keep automatic runs fast and non-interactive —
 run `install.ps1` by hand (no flag) whenever you want the full WSL/Windows
 Terminal provisioning to run too.
+
+**The installer also updates its own checkout first.** Before relinking,
+`install.ps1`/`install.sh` fast-forward the checkout they were launched from
+(`git pull --ff-only origin`, never destructive — see
+[Derived checkouts](#derived-checkouts-pull-only-mirrors)). So a logon-triggered
+run picks up changes pushed from somewhere else, rather than only re-applying
+whatever was already on disk. That's what closes the loop for a checkout nobody
+ever edits or pulls by hand.
+
+**That self-pull and the hooks would otherwise chase each other.** A pull that
+actually lands commits fires `post-merge`/`post-rewrite`, which runs
+`hooks/_dispatch.sh`, which runs the installer — from inside the installer, so
+every run that pulled anything would do the whole install twice. Both installers
+therefore export `DOTFILES_INSTALL_ACTIVE=1` for the duration of that one `git
+pull`; `_dispatch.sh` finds it in the environment it inherits and exits
+immediately, leaving the outer run to do the relinking once. The variable is
+scoped to that single git invocation and restored straight after, so a `git
+pull` you type by hand still triggers a normal sync.
 
 ## Structure
 

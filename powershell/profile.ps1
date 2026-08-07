@@ -59,6 +59,36 @@ function dps  { docker ps --format "table {{.Names}}`t{{.Status}}`t{{.Ports}}" }
 function reload  { . $PROFILE }
 function path    { $env:PATH -split [IO.Path]::PathSeparator }
 
+# ── claude → WSL ──────────────────────────────────────────────────────────────
+# The real Claude Code install lives in the WSL distro, so `claude` typed in an
+# interactive pwsh session forwards into it. This function is the ONLY forwarding
+# mechanism: a windows/claude.cmd on the PATH used to cover cmd.exe and
+# profile-less PowerShell, but cmd.exe re-parses a batch file's %* after
+# substitution, so a quote or an & in any argument could break out and run
+# arbitrary Windows commands — it was removed rather than patched, and must not
+# come back. Calling wsl.exe — a real .exe — straight from a function skips cmd
+# entirely and forwards every argument verbatim as argv (verified for spaces,
+# quotes, &, |, %, !, backslash paths and empty strings). Contexts without this
+# profile (raw cmd.exe, `pwsh -NoProfile`) are no longer intercepted at all; see
+# README.md.
+#
+# `bash -lc <script> claude @args` passes the script as a fixed
+# constant and every user argument as a positional parameter, so no argument can
+# ever be re-parsed as shell syntax. Login shell is used so /etc/profile.d
+# applies, but it isn't enough on its own (~/.bashrc returns early when
+# non-interactive and ~/.profile is skipped when ~/.bash_profile exists), hence
+# the explicit PATH prepend. No --cd is passed: wsl.exe translates the caller's
+# cwd itself, including \\wsl.localhost paths, and falls back to the Linux home
+# directory when a path has no WSL mapping, whereas an explicit --cd would turn
+# that graceful fallback into a hard error.
+if (Test-Path "$env:SystemRoot\System32\wsl.exe") {
+  function claude {
+    $distro = if ($env:CLAUDE_WSL_DISTRO) { $env:CLAUDE_WSL_DISTRO } else { "Debian" }
+    $launch = 'PATH=$HOME/.local/bin:$HOME/bin:$PATH; if ! command -v claude >/dev/null 2>&1 && [ -s $HOME/.nvm/nvm.sh ]; then . $HOME/.nvm/nvm.sh >/dev/null 2>&1; fi; command -v claude >/dev/null 2>&1 || { echo claude: Claude Code is not installed in the $WSL_DISTRO_NAME WSL distro. Install it there, then retry. 1>&2; exit 127; }; case $(command -v claude) in /mnt/*) echo claude: only a Windows claude is visible from inside WSL - refusing to recurse. Install Claude Code in the distro. 1>&2; exit 127;; esac; exec claude "$@"'
+    & "$env:SystemRoot\System32\wsl.exe" -d $distro -e bash -lc $launch claude @args
+  }
+}
+
 # ── prompt ────────────────────────────────────────────────────────────────────
 if (Get-Command starship -ErrorAction SilentlyContinue) {
   Invoke-Expression (&starship init powershell)

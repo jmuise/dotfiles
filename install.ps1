@@ -148,6 +148,111 @@ if (-not $pyPath) {
   exit 1
 }
 
+# ── self-update (fast-forward only) ───────────────────────────────────────────
+# Any checkout is treated as derived: fast-forward it from origin before
+# relinking, so a machine that only ever *runs* the installer still converges on
+# whatever was last pushed. Deliberately --ff-only and deliberately
+# non-destructive — no reset, merge, rebase, stash or checkout, ever. If this
+# checkout has commits origin doesn't, the installer refuses to pull, warns
+# loudly, and carries on relinking rather than touching a byte of that work.
+#
+# Re-entrancy — do NOT delete the DOTFILES_INSTALL_ACTIVE lines below, they are
+# not dead code. install.py points this checkout at the repo-tracked hooks/ dir
+# (`git config core.hooksPath hooks`), and post-merge / post-rewrite /
+# post-checkout all exec hooks/_dispatch.sh, which runs this installer. So a
+# pull that actually lands commits makes git re-enter install.ps1 from inside
+# install.ps1: a full nested duplicate install on every run that pulls anything.
+# The sentinel below breaks that cycle — _dispatch.sh sees it in the environment
+# it inherits (installer → git → sh → hook) and exits immediately. It is set
+# only around the pull itself and restored right after, so a `git pull` typed by
+# hand later in the same session still gets its hooks. The same name appears in
+# install.sh and hooks/_dispatch.sh; change it in one place and you must change
+# it in all three.
+log "Updating this checkout from origin (fast-forward only)..."
+if ($DryRun) {
+  Write-Host "  git -C $DOTFILES pull --ff-only origin"
+} elseif (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  warn "git not on PATH — skipping self-update, continuing with the install"
+} else {
+  $skipReason  = $null
+  $pullOutput  = @()
+  $pullExit    = 0
+  $prevEap     = $ErrorActionPreference
+  $guardWasSet = Test-Path Env:\DOTFILES_INSTALL_ACTIVE
+  $prevGuard   = if ($guardWasSet) { $env:DOTFILES_INSTALL_ACTIVE } else { $null }
+
+  # git signals failure through exit codes and writes ordinary progress to
+  # stderr. With $ErrorActionPreference = "Stop" — and PS 7.4+'s
+  # $PSNativeCommandUseErrorActionPreference, which makes a non-zero native exit
+  # throw — either of those could abort the whole installer. Drop to "Continue"
+  # for the git calls and decide everything from $LASTEXITCODE instead. Every
+  # failure mode here means "skip the pull", never "abort the install".
+  $ErrorActionPreference = "Continue"
+  try {
+    # Captured into an array rather than piped through Select-Object: a
+    # pipeline-stopping cmdlet can cut a native command short and leave
+    # $LASTEXITCODE reflecting that, not git's real verdict.
+    $inWorkTree = @(git -C $DOTFILES rev-parse --is-inside-work-tree 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $inWorkTree.Count -eq 0 -or $inWorkTree[0] -ne "true") {
+      $skipReason = "not a git work tree"
+    }
+    if (-not $skipReason) {
+      # Existence probe only — the URL is discarded and never interpolated into
+      # anything. The remote name below is the hardcoded literal 'origin'; it is
+      # never read from config, so nothing network- or config-derived can reach
+      # a command line.
+      git -C $DOTFILES remote get-url origin *>$null
+      if ($LASTEXITCODE -ne 0) { $skipReason = "no 'origin' remote" }
+    }
+    if (-not $skipReason) {
+      git -C $DOTFILES symbolic-ref --quiet HEAD *>$null
+      if ($LASTEXITCODE -ne 0) { $skipReason = "HEAD is detached — nothing to fast-forward" }
+    }
+    if (-not $skipReason) {
+      git -C $DOTFILES rev-parse --verify --quiet '@{upstream}' *>$null
+      if ($LASTEXITCODE -ne 0) { $skipReason = "this branch has no upstream — nothing to fast-forward" }
+    }
+    if (-not $skipReason) {
+      $env:DOTFILES_INSTALL_ACTIVE = "1"
+      # Output captured rather than printed so a routine up-to-date run stays
+      # quiet, consistent with the *>$null suppression in the Scoop section;
+      # it is echoed back only when the pull fails and you need to see why.
+      $pullOutput = @(git -C $DOTFILES pull --ff-only origin 2>&1)
+      $pullExit   = $LASTEXITCODE
+    }
+  } catch {
+    # Belt and braces: nothing in this block is ever allowed to end the install.
+    $skipReason = "git call failed ($($_.Exception.Message))"
+  } finally {
+    if ($guardWasSet) { $env:DOTFILES_INSTALL_ACTIVE = $prevGuard }
+    else { Remove-Item Env:\DOTFILES_INSTALL_ACTIVE -ErrorAction SilentlyContinue }
+    $ErrorActionPreference = $prevEap
+  }
+
+  if ($skipReason) {
+    warn "Self-update skipped — $skipReason. Continuing with the install."
+  } elseif ($pullExit -eq 0) {
+    success "Checkout is up to date with origin"
+  } else {
+    warn "══════════════════════════════════════════════════════════════════"
+    warn "COULD NOT FAST-FORWARD THIS CHECKOUT FROM origin"
+    warn "══════════════════════════════════════════════════════════════════"
+    warn "Nothing was discarded, reset, merged, rebased or stashed. Your"
+    warn "working tree and every local commit are exactly as you left them."
+    warn ""
+    warn "If this checkout has diverged, it holds commits origin does not."
+    warn "A checkout like this is meant to be a derived, pull-only mirror:"
+    warn "make edits in your primary checkout and push them from there."
+    warn "A human has to resolve this by hand — the installer will not."
+    warn ""
+    warn "(An unreachable remote lands here too. In that case the checkout"
+    warn "is merely stale and there is nothing to resolve.)"
+    warn "══════════════════════════════════════════════════════════════════"
+    $pullOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+    warn "Continuing with the rest of the install — relinking is still worth doing."
+  }
+}
+
 # ── cross-platform install (shared logic) ─────────────────────────────────────
 $pyArgs = @("$DOTFILES\install.py")
 if ($DryRun) { $pyArgs += "--dry-run" }
@@ -187,6 +292,14 @@ if ($DryRun) {
   New-ItemProperty -Path $autoRunKey -Name AutoRun -Value $newAutoRun -PropertyType String -Force | Out-Null
   success "cmd.exe AutoRun configured"
 }
+
+# claude → WSL forwarding is delivered solely by the `claude` function in
+# powershell/profile.ps1, linked above. An earlier version of this script also
+# installed a windows/claude.cmd onto the user PATH to cover cmd.exe and
+# profile-less PowerShell; that was removed because cmd.exe re-parses a batch
+# file's %* after substitution, so a quote or an & in any argument could break
+# out and run arbitrary Windows commands (and %VAR% in an argument was silently
+# expanded). See README.md — do not reintroduce a .cmd shim.
 
 # Scoop packages — Scoop was bootstrapped and Python installed earlier; now
 # apply buckets and the full package list. See packages/scoop.txt.
