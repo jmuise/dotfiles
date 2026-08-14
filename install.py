@@ -368,6 +368,21 @@ if not is_devcontainer():
     link(DOTFILES / "vscode" / "settings.json",    vscode_dir / "settings.json")
     link(DOTFILES / "vscode" / "keybindings.json", vscode_dir / "keybindings.json")
 
+    # Scoop-installed VS Code runs in portable mode and reads its user data from
+    # <scoop app>/data/user-data/User, not %APPDATA%\Code\User above — so the
+    # links just above silently do nothing for a Scoop install. `apps/vscode/
+    # current` is a version junction Scoop repoints on every update, but
+    # `persist/vscode` survives updates/reinstalls, so link there instead. Root
+    # resolution matches Scoop's own: $env:SCOOP if set, else ~/scoop (Scoop's
+    # documented default of $env:USERPROFILE\scoop). Gated on an actual Scoop
+    # VS Code install so this is a no-op on any machine without one.
+    if is_windows:
+        scoop_root = Path(os.environ.get("SCOOP", str(HOME / "scoop")))
+        if (scoop_root / "apps" / "vscode").is_dir():
+            scoop_vscode_dir = scoop_root / "persist" / "vscode" / "data" / "user-data" / "User"
+            link(DOTFILES / "vscode" / "settings.json",    scoop_vscode_dir / "settings.json")
+            link(DOTFILES / "vscode" / "keybindings.json", scoop_vscode_dir / "keybindings.json")
+
 # ── Claude Code ───────────────────────────────────────────────────────────────
 log("Claude Code global config...")
 claude_dir = HOME / ".claude"
