@@ -38,6 +38,12 @@ So, in addition to whatever tests exist:
 
 Report the actual observed output as evidence for the load-bearing checks, not a summary claim that they passed.
 
+## Keep the project's entry points mirrored in VS Code tasks
+
+When you add, rename, or remove a canonical entry point — a `Makefile` target, a `package.json` script, a `just` recipe, a compose service worth running by hand — mirror that change in `.vscode/tasks.json` as part of the same commit. The Captain wants the common operations one palette away rather than remembered and retyped, and a tasks file that has silently drifted from the real commands is worse than none at all, because it fails in a way people trust.
+
+The tasks file is a mirror, not a second source of truth: the task should invoke the project's real entry point (`make test`, `npm run build`, `uv run pytest`) rather than duplicating the underlying command, so the two cannot disagree. Keep labels recognisably close to the command they wrap.
+
 ## Commit and push discipline
 
 - Work on a feature branch, never directly on the default branch. Follow the branch naming in your brief.
