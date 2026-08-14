@@ -109,6 +109,14 @@
   // ── extensions ───────────────────────────────────────────────────────────────
   "extensions.ignoreRecommendations": false,
 
+  // ── ports ────────────────────────────────────────────────────────────────────
+  // Stop VS Code from scanning listening processes and auto-adding every port it
+  // notices - only explicit devcontainer.json forwardPorts/portsAttributes get
+  // forwarded. Also stop it from re-adding stale ports from the previous session
+  // on reconnect.
+  "remote.autoForwardPorts": false,
+  "remote.restoreForwardedPorts": false,
+
   // ── devcontainers ────────────────────────────────────────────────────────────
   "dotfiles.repository": "https://github.com/jmuise/dotfiles",
   "dotfiles.targetPath": "~/dotfiles",
