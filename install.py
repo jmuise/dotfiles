@@ -503,6 +503,19 @@ if is_devcontainer():
             warn("Credential forwarding not confirmed for gh token — new shells won't export GH_TOKEN automatically. "
                  "Run 'gh auth login' on the host and rebuild, or inside this container directly. See secrets/README.md.")
 
+    OPENROUTER_HOST = "dotfiles-openrouter.local"
+    OPENROUTER_SENTINEL = CACHE_DIR / "openrouter-token.configured"
+    if not OPENROUTER_SENTINEL.exists() and shutil.which("git") and not DRY_RUN:
+        log("Checking OpenRouter credential forwarding...")
+        or_creds = git_credential_fill("https", OPENROUTER_HOST, "openrouter")
+        if or_creds.get("password"):
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            OPENROUTER_SENTINEL.touch()
+            log("OpenRouter credential forwarding confirmed — OPENROUTER_API_KEY will be exported automatically in new shells.")
+        else:
+            warn("Credential forwarding not confirmed for OpenRouter key — new shells won't export OPENROUTER_API_KEY automatically. "
+                 "See secrets/README.md.")
+
 # ── macOS system defaults ─────────────────────────────────────────────────────
 if is_macos and not is_devcontainer():
     defaults_sh = DOTFILES / "macos" / "defaults.sh"

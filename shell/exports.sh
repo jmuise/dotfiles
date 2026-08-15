@@ -79,7 +79,26 @@ export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
 # setup has run. The sentinel (created only by the setup script) skips that
 # path entirely pre-setup, and the `-z` check means post-setup cost is paid
 # once per login, not once per terminal tab (child shells inherit the export).
-if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] \
+#
+# OpenRouter takes precedence over the Claude Pro OAuth path below: when
+# configured, ANTHROPIC_API_KEY="" forces Claude Code to use ANTHROPIC_AUTH_TOKEN
+# instead of any cached OAuth session. See secrets/setup-openrouter-key.sh.
+if [[ -z "${OPENROUTER_API_KEY:-}" ]] \
+   && [[ -f "$XDG_CACHE_HOME/dotfiles/openrouter-token.configured" ]] \
+   && command -v git &>/dev/null; then
+  _openrouter_key=$(printf 'protocol=https\nhost=dotfiles-openrouter.local\nusername=openrouter\n' \
+    | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+  if [[ -n "$_openrouter_key" ]]; then
+    export OPENROUTER_API_KEY="$_openrouter_key"
+    export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+    export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
+    export ANTHROPIC_API_KEY=""
+  fi
+  unset _openrouter_key
+fi
+
+if [[ -z "${OPENROUTER_API_KEY:-}" ]] \
+   && [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] \
    && [[ -f "$XDG_CACHE_HOME/dotfiles/claude-token.configured" ]] \
    && command -v git &>/dev/null; then
   _claude_token=$(printf 'protocol=https\nhost=dotfiles-secrets.local\nusername=claude-code\n' \

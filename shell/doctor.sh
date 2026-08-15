@@ -32,6 +32,11 @@ doctor() {
     issues=$((issues + 1))
   fi
 
+  if [[ -f "${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/openrouter-token.configured" && -z "${OPENROUTER_API_KEY:-}" ]]; then
+    printf '\033[0;33m⚠\033[0m OpenRouter key forwarding is configured but OPENROUTER_API_KEY is unset this session — see secrets/README.md\n'
+    issues=$((issues + 1))
+  fi
+
   # `gh auth token` is a local read (no network call), same check
   # shell/exports.sh uses to populate GH_TOKEN - safe to repeat here.
   if command -v gh &>/dev/null; then

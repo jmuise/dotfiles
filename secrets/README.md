@@ -13,6 +13,7 @@ everything:
 | `git` | Already handled - your OS credential store (Windows Credential Manager via Git Credential Manager, macOS Keychain, Linux libsecret), wired up by `git-credential-manager` itself. Nothing this repo needs to do. | N/A |
 | `gh` | Already handled on the host/WSL - `gh auth login`'s own persisted session (OS keyring). A devcontainer has no such session of its own, so its token rides the same forwarding channel as below, under `dotfiles-gh.local`. | `gh auth token` in `shell/exports.sh` / `powershell/profile.ps1`, falling back to credential forwarding if that's empty |
 | `claude` (Claude Code) | The one real gap: `claude setup-token` prints a long-lived token but doesn't persist it anywhere. | Stored via `git-credential-manager` under a synthetic host (`dotfiles-secrets.local`), retrieved the same way `git credential fill` retrieves a real one |
+| `openrouter` (Claude Code via OpenRouter) | User-provided API key, stored in the OS credential store under `dotfiles-openrouter.local`. Takes precedence over the Claude Pro OAuth path. | `OPENROUTER_API_KEY` + routing vars exported in `shell/exports.sh` / `powershell/profile.ps1`; Kilo Code reads it natively via `{env:OPENROUTER_API_KEY}` in `kilo.jsonc` |
 | `kilo` (Kilo Code) | Per-provider API keys stored in `~/.local/share/kilo/auth.json` by `kilo auth login`. No forwarding script needed — just run it interactively in the WSL distro or devcontainer. | N/A — `kilo auth login` handles it |
 
 The synthetic-host trick: `git credential approve`/`fill` is a generic
@@ -20,7 +21,8 @@ protocol/host/username/password store - it doesn't require the host to be a
 real git remote. Since GCM is already the credential backend for real git
 hosts on every platform here, reusing it avoids standing up a second secret
 store just for one token. `git/.gitconfig.template` sets
-`credential.https://dotfiles-secrets.local.provider = generic` so GCM skips
+`credential.https://dotfiles-secrets.local.provider = generic` (and the same
+for `dotfiles-gh.local` and `dotfiles-openrouter.local`) so GCM skips
 trying to auto-detect a provider for a host that will never resolve.
 
 This mechanism only works where a `credential.helper` is actually active, so
@@ -85,6 +87,32 @@ against an unconfigured host isn't a fast local no-op: GCM tries (and fails)
 to network-probe it first, adding several real seconds to shell startup. The
 sentinel means that cost is never paid until you've actually run this script.
 
+```bash
+./secrets/setup-openrouter-key.sh  # macOS / Linux / WSL / devcontainer
+```
+```powershell
+.\secrets\setup-openrouter-key.ps1 # native Windows
+```
+
+Paste your OpenRouter API key, confirm storage. Same sentinel pattern
+(`openrouter-token.configured`). When configured, `OPENROUTER_API_KEY`,
+`ANTHROPIC_BASE_URL=https://openrouter.ai/api`, and `ANTHROPIC_AUTH_TOKEN`
+are exported automatically in every new shell, and `ANTHROPIC_API_KEY=""`
+forces Claude Code to route through OpenRouter instead of burning a Claude Pro
+subscription. Takes precedence over the Claude Pro OAuth path above - if both
+are configured, OpenRouter wins.
+
+**Important:** `ANTHROPIC_API_KEY` must be an *explicit empty string* in the
+environment - not unset. If a stale Anthropic key lingers in the env alongside
+`ANTHROPIC_AUTH_TOKEN`, the key silently wins and OpenRouter is ignored. If
+you were previously logged into Claude Code with Pro, run `/logout` inside
+Claude Code to clear any cached OAuth session before relaunching.
+
+Model overrides (`ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`,
+etc.) are left to user preference - this setup doesn't set them, since
+hardcoding a specific OpenRouter model could surprise users who want different
+defaults per tier.
+
 `gh` needs no setup script - if `gh auth login` has been run on that machine,
 `gh auth token` in shell init just works.
 
@@ -145,14 +173,15 @@ this at shell startup.
 
 **The VS Code Claude Code *extension* (not just the CLI) can come up looking
 unauthenticated on first container start, even once `CLAUDE_CODE_OAUTH_TOKEN`
-is correctly set and the CLI works fine in the integrated terminal.** The
-extension and CLI read the same auth env vars (`ANTHROPIC_API_KEY`,
-`CLAUDE_CODE_OAUTH_TOKEN`, `apiKeyHelper`) with identical precedence - this
-isn't an OAuth-vs-API-key gap. The cause is timing: the extension host reads
-VS Code's cached "resolved shell environment" snapshot, which can be taken
-before `install.sh` finishes wiring up credential forwarding and the sentinel
-file. **Fix: run `Developer: Reload Window` once after `install.sh`
-completes** - confirmed live this resolves it without any config changes.
+or `OPENROUTER_API_KEY` is correctly set and the CLI works fine in the integrated
+terminal.** The extension and CLI read the same auth env vars
+(`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENROUTER_API_KEY`,
+`apiKeyHelper`) with identical precedence - this isn't an OAuth-vs-API-key gap.
+The cause is timing: the extension host reads VS Code's cached "resolved shell
+environment" snapshot, which can be taken before `install.sh` finishes wiring up
+credential forwarding and the sentinel file. **Fix: run `Developer: Reload
+Window` once after `install.sh` completes** - confirmed live this resolves it
+without any config changes.
 
 **`remoteEnv`/`${localEnv:...}` in the project's `devcontainer.json` does
 NOT work reliably and shouldn't be relied on**, at least for a project opened
@@ -174,5 +203,5 @@ isn't fixable from this repo's side. Use credential forwarding instead.
 - The only repo-tracked artifact is the *name* of the synthetic host
   (`dotfiles-secrets.local`) and the `provider = generic` config line - both
   meaningless without an actual stored secret behind them.
-- Sentinel files (`claude-token.configured`) contain no secret material -
+- Sentinel files (`claude-token.configured`, `openrouter-token.configured`) contain no secret material -
   they're just a marker so shell init knows a lookup is worth attempting.

@@ -111,8 +111,25 @@ if (Get-Command starship -ErrorAction SilentlyContinue) {
 # no-ops if unconfigured/unauthenticated - never blocks shell startup. The
 # sentinel-file check avoids GCM's multi-second network-probe-then-fail path
 # that a plain `git credential fill` against an unconfigured host triggers.
+#
+# OpenRouter takes precedence over the Claude Pro OAuth path below: when
+# configured, ANTHROPIC_API_KEY="" forces Claude Code to use ANTHROPIC_AUTH_TOKEN
+# instead of any cached OAuth session. See secrets/setup-openrouter-key.ps1.
+$orSentinel = Join-Path $env:LOCALAPPDATA "dotfiles\openrouter-token.configured"
+if (-not $env:OPENROUTER_API_KEY -and (Test-Path $orSentinel) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+  $credInput = "protocol=https`nhost=dotfiles-openrouter.local`nusername=openrouter`n"
+  $credOutput = $credInput | git credential fill 2>$null
+  $passwordLine = $credOutput | Where-Object { $_ -like "password=*" } | Select-Object -First 1
+  if ($passwordLine) {
+    $env:OPENROUTER_API_KEY = $passwordLine.Substring(9)
+    $env:ANTHROPIC_BASE_URL = "https://openrouter.ai/api"
+    $env:ANTHROPIC_AUTH_TOKEN = $env:OPENROUTER_API_KEY
+    $env:ANTHROPIC_API_KEY = ""
+  }
+}
+
 $claudeTokenSentinel = Join-Path $env:LOCALAPPDATA "dotfiles\claude-token.configured"
-if (-not $env:CLAUDE_CODE_OAUTH_TOKEN -and (Test-Path $claudeTokenSentinel) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+if (-not $env:OPENROUTER_API_KEY -and -not $env:CLAUDE_CODE_OAUTH_TOKEN -and (Test-Path $claudeTokenSentinel) -and (Get-Command git -ErrorAction SilentlyContinue)) {
   $credInput = "protocol=https`nhost=dotfiles-secrets.local`nusername=claude-code`n"
   $credOutput = $credInput | git credential fill 2>$null
   $passwordLine = $credOutput | Where-Object { $_ -like "password=*" } | Select-Object -First 1
@@ -149,6 +166,12 @@ function doctor {
   $claudeTokenSentinel = Join-Path $env:LOCALAPPDATA "dotfiles\claude-token.configured"
   if ((Test-Path $claudeTokenSentinel) -and -not $env:CLAUDE_CODE_OAUTH_TOKEN) {
     Write-Host "⚠ Claude Code token forwarding is configured but CLAUDE_CODE_OAUTH_TOKEN is unset this session — see secrets/README.md" -ForegroundColor Yellow
+    $issues++
+  }
+
+  $orSentinel = Join-Path $env:LOCALAPPDATA "dotfiles\openrouter-token.configured"
+  if ((Test-Path $orSentinel) -and -not $env:OPENROUTER_API_KEY) {
+    Write-Host "⚠ OpenRouter key forwarding is configured but OPENROUTER_API_KEY is unset this session — see secrets/README.md" -ForegroundColor Yellow
     $issues++
   }
 

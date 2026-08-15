@@ -68,6 +68,13 @@
 [credential "https://dotfiles-gh.local"]
 	provider = generic
 
+# Stores the OpenRouter API key so shell init can export OPENROUTER_API_KEY
+# in every new shell - see secrets/setup-openrouter-key.sh. "provider =
+# generic" for the same reason as above: skips GCM's slow auto-detection
+# probe.
+[credential "https://dotfiles-openrouter.local"]
+	provider = generic
+
 [alias]
 	# status / log
 	s    = status -sb
