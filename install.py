@@ -337,6 +337,30 @@ if is_linux and not shutil.which("yazi"):
             warn(f"yazi install skipped: {_e}")
 link(DOTFILES / "yazi", HOME / ".config" / "yazi")
 
+# ── Kilo Code CLI ──────────────────────────────────────────────────────────────
+# Installed alongside Claude Code wherever that tool is expected. The dependency
+# is npm (provided by node — in the Brewfile on macOS, in apt.txt on Linux, or
+# preinstalled in devcontainer base images). On Windows, Kilo is not installed
+# natively — powershell/profile.ps1 forwards `kilo` into the WSL distro, same
+# pattern as `claude`.
+log("Kilo Code CLI...")
+if not is_windows and not shutil.which("kilo"):
+    if DRY_RUN:
+        print("  would install kilo via: npm install -g @kilocode/cli")
+    else:
+        _npm = shutil.which("npm")
+        if _npm:
+            log("Installing Kilo Code...")
+            _r = subprocess.run([_npm, "install", "-g", "@kilocode/cli"],
+                                capture_output=True, text=True, timeout=120)
+            if _r.returncode == 0:
+                success("kilo installed")
+            else:
+                warn(f"kilo install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
+        else:
+            warn("npm not found — skipping kilo install. Run: npm install -g @kilocode/cli")
+
+
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")
 ssh_dir = HOME / ".ssh"
@@ -392,6 +416,19 @@ link(DOTFILES / "claude" / "statusline-command.sh",  claude_dir / "statusline-co
 link(DOTFILES / "claude" / "agents",                 claude_dir / "agents")
 link(DOTFILES / "claude" / "hooks",                  claude_dir / "hooks")
 
+# ── Kilo Code ───────────────────────────────────────────────────────────────────
+# Same schema, same structure as the ~/.config/kilo/ directory Kilo itself
+# creates — config files are symlinked from the repo just like the claude/
+# entries above. The global instructions file is shared from claude/CLAUDE.md
+# (one source of truth — the content is tool-agnostic, so both Claude Code
+# reading CLAUDE.md and Kilo reading AGENTS.md see the same rules).
+log("Kilo Code global config...")
+kilo_config_dir = HOME / ".config" / "kilo"
+link(DOTFILES / "claude" / "CLAUDE.md",              kilo_config_dir / "AGENTS.md")
+link(DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jsonc")
+link(DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc")
+link(DOTFILES / "kilo" / ".kilo",                    kilo_config_dir / ".kilo")
+
 # ── devcontainer extras ───────────────────────────────────────────────────────
 if is_devcontainer():
     log("Devcontainer extras...")
@@ -400,6 +437,11 @@ if is_devcontainer():
         log("Installing Claude Code in container...")
         if subprocess.run("curl -fsSL https://claude.ai/install.sh | bash", shell=True).returncode != 0:
             warn("Claude Code install skipped (no curl or offline)")
+
+    if not shutil.which("kilo") and not DRY_RUN:
+        log("Installing Kilo Code in container...")
+        if subprocess.run("npm install -g @kilocode/cli", shell=True).returncode != 0:
+            warn("Kilo Code install skipped (no npm or offline)")
 
     if not shutil.which("gh") and not DRY_RUN:
         log("Installing gh in container...")

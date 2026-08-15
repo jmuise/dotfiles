@@ -10,6 +10,10 @@ ssh/sockets/
 # macOS
 .DS_Store
 
+# Kilo project-level config (created at runtime by the CLI — separate from the
+# tracked kilo/ directory, which holds global config symlinked to ~/.config/kilo/)
+/.kilo/
+
 # Editor
 .vscode/
 *.swp

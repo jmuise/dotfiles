@@ -28,6 +28,12 @@ brew "gh"           # GitHub CLI
 brew "lazygit"      # TUI git client
 cask "git-credential-manager"  # credential.helper - see secrets/README.md
 
+# ── AI tooling ─────────────────────────────────────────────────────────────────
+# Node provides npm, which installs both Claude Code and Kilo Code CLIs.
+brew "node"
+# Kilo Code CLI (npm global) is installed by install.py alongside Claude Code.
+# Install manually on macOS: npm install -g @kilocode/cli
+
 # ── editor ────────────────────────────────────────────────────────────────────
 brew "neovim"
 

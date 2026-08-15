@@ -24,6 +24,10 @@ build-essential
 direnv
 unzip
 
+# Node.js — provides npm, needed for Kilo Code CLI install (npm install -g @kilocode/cli)
+nodejs
+npm
+
 # Containers
 docker.io
 docker-compose
