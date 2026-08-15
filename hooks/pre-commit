@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Guard against agent-definition drift: the body content of
+# claude/agents/number-one.md and kilo/.kilo/agents/number-one.md must stay
+# identical (only the YAML frontmatter differs between Claude Code and Kilo).
+# Exits non-zero if the markdown body of either file has diverged.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+CLAUDE_AGENT="claude/agents/number-one.md"
+KILO_AGENT="kilo/.kilo/agents/number-one.md"
+
+for f in "$CLAUDE_AGENT" "$KILO_AGENT"; do
+  if [ ! -f "$f" ]; then continue 2; fi
+done
+
+# Extract body (everything after the second --- delimiter).
+# c counts --- delimiters; skip the delimiter lines themselves, print only after c > 1.
+claude_body=$(awk '/^---$/{c++; next} c>1' "$CLAUDE_AGENT")
+kilo_body=$(awk '/^---$/{c++; next} c>1' "$KILO_AGENT")
+
+if [ "$claude_body" != "$kilo_body" ]; then
+  echo "✖ agent-definition drift detected between $CLAUDE_AGENT and $KILO_AGENT"
+  echo "  The markdown body (instructions) must be identical across both files."
+  echo "  Only the YAML frontmatter may differ (Claude Code vs Kilo format)."
+  echo ""
+  diff <(echo "$claude_body") <(echo "$kilo_body") || true
+  echo ""
+  echo "  Fix: edit $CLAUDE_AGENT, then copy the body portion into $KILO_AGENT"
+  echo "  (preserving its existing frontmatter). Or run:"
+  echo "    tools/sync-agent.sh"
+  exit 1
+fi
