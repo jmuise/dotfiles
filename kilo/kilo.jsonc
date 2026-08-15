@@ -1,0 +1,46 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+
+  // Instructions — sourced from the dotfiles repo via the AGENTS.md symlink
+  // (install.sh links claude/CLAUDE.md → ~/.config/kilo/AGENTS.md), which keeps
+  // a single source of truth for global rules shared by both Claude Code and
+  // Kilo rather than maintaining parallel copies.
+  "instructions": ["AGENTS.md"],
+
+  // Provider configuration. API keys are resolved from environment variables
+  // ({env:VAR} syntax — only honored in trusted global config, never in a
+  // project .kilo/ directory). In devcontainers, install.sh's credential
+  // forwarding step exports these from git-credential-manager, exactly as it
+  // does for CLAUDE_CODE_OAUTH_TOKEN.
+  "provider": {
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    },
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "openrouter": {
+      "options": {
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      }
+    }
+  },
+
+  // Permission rules — mirror claude/hooks/block-pr-merge.sh: never merge,
+  // never force-push to protected branches. Kilo enforces these natively via
+  // the permission config rather than requiring an external hook script.
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git *": "allow",
+      "gh pr merge *": "deny",
+      "git push --force *": "deny",
+      "git push * --force *": "deny",
+      "git push --force-with-lease *": "deny"
+    }
+  }
+}
