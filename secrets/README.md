@@ -13,6 +13,7 @@ everything:
 | `git` | Already handled - your OS credential store (Windows Credential Manager via Git Credential Manager, macOS Keychain, Linux libsecret), wired up by `git-credential-manager` itself. Nothing this repo needs to do. | N/A |
 | `gh` | Already handled on the host/WSL - `gh auth login`'s own persisted session (OS keyring). A devcontainer has no such session of its own, so its token rides the same forwarding channel as below, under `dotfiles-gh.local`. | `gh auth token` in `shell/exports.sh` / `powershell/profile.ps1`, falling back to credential forwarding if that's empty |
 | `claude` (Claude Code) | The one real gap: `claude setup-token` prints a long-lived token but doesn't persist it anywhere. | Stored via `git-credential-manager` under a synthetic host (`dotfiles-secrets.local`), retrieved the same way `git credential fill` retrieves a real one |
+| `kilo` (Kilo Code) | Per-provider API keys stored in `~/.local/share/kilo/auth.json` by `kilo auth login`. No forwarding script needed — just run it interactively in the WSL distro or devcontainer. | N/A — `kilo auth login` handles it |
 
 The synthetic-host trick: `git credential approve`/`fill` is a generic
 protocol/host/username/password store - it doesn't require the host to be a

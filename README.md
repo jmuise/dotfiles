@@ -7,11 +7,12 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | Path | What it configures |
 |------|-------------------|
 | `git/` | `.gitconfig` with aliases, delta diff, sane push/pull defaults |
-| `shell/` | `.zshrc`, `.bashrc`, shared `aliases.sh` and `exports.sh` |
-| `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git, `claude` → WSL forwarding) + a Windows PowerShell 5.1 shim that hands off to pwsh |
+| `shell/` | `.zshrc`, `.bashrc`, shared `aliases.sh` and `exports.sh` (exports `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`, and any forwarded Kilo provider keys) |
+| `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git, `claude` → WSL forwarding, `kilo` → WSL forwarding) + a Windows PowerShell 5.1 shim that hands off to pwsh |
 | `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
 | `claude/` | Claude Code global config (`CLAUDE.md`, `settings.json`), plus `agents/` (the `number-one` orchestrator subagent) and `hooks/` (a `PreToolUse` guardrail blocking PR-merge/force-push commands) |
+| `kilo/` | Kilo Code global config (`kilo.jsonc`, `tui.jsonc`), plus `.kilo/agents/` (the `number-one` orchestrator subagent in Kilo's frontmatter format). `AGENTS.md` is symlinked from `claude/CLAUDE.md` — one source of truth for global rules shared by both tools. |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.template` (rendered to `~/.ssh/config`, no keys) |
@@ -90,7 +91,7 @@ a local, dependabot-style update loop without needing a GitHub remote.
 
 ## Devcontainers
 
-VS Code will automatically clone this repo and run `install.sh` inside every devcontainer you open, giving you your shell config, git aliases, starship prompt, the Claude Code CLI, the GitHub CLI (`gh`), and `delta` everywhere.
+VS Code will automatically clone this repo and run `install.sh` inside every devcontainer you open, giving you your shell config, git aliases, starship prompt, the Claude Code CLI, the Kilo Code CLI, the GitHub CLI (`gh`), and `delta` everywhere.
 
 **Enable it once in VS Code settings:**
 
@@ -100,7 +101,7 @@ VS Code will automatically clone this repo and run `install.sh` inside every dev
 "dotfiles.installCommand": "~/dotfiles/install.sh"
 ```
 
-These are already set in `vscode/settings.json`. The install script detects the container context (`/.dockerenv`, `$REMOTE_CONTAINERS`, `$CODESPACES`) and skips host-only steps like VS Code settings and macOS defaults. It will attempt to install starship, the Claude Code CLI, `gh`, and `delta` (via `apt-get`) for whichever of those are missing from the base image.
+These are already set in `vscode/settings.json`. The install script detects the container context (`/.dockerenv`, `$REMOTE_CONTAINERS`, `$CODESPACES`) and skips host-only steps like VS Code settings and macOS defaults. It will attempt to install starship, the Claude Code CLI, the Kilo Code CLI, `gh`, and `delta` (via `apt-get`) for whichever of those are missing from the base image.
 
 Git identity comes along for free too: VS Code's Dev Containers "copy git config" feature copies your host `~/.gitconfig` into every container automatically, and since it's a single rendered file (see [Machine-specific config](#machine-specific-config)) rather than one that `include`s another, there's nothing project-specific to configure — no per-project bind mount needed. (Copy-git-config does *not* follow `include.path` — [microsoft/vscode-remote-release#9469](https://github.com/microsoft/vscode-remote-release/issues/9469) — which is what a split file would require.)
 
@@ -175,6 +176,20 @@ Set `CLAUDE_WSL_DISTRO` to target a distro other than `Debian`. The function
 only speaks up in genuinely broken situations — WSL absent, distro missing, or
 Claude Code not installed inside the distro — and refuses to run a `/mnt/…`
 Windows `claude` from inside WSL so it can't recurse into itself.
+
+### `kilo` on native Windows → WSL
+
+Same forwarding pattern as `claude` above — the Kilo Code install lives inside
+the WSL distro, and `powershell/profile.ps1` defines a `kilo` function that
+starts a Kilo session inside Debian with the same argument-forwarding
+guarantees (no cmd.exe, absolute `wsl.exe` path, no `--cd`). Run
+`npm install -g @kilocode/cli` inside the distro to install it there. Set
+`KILO_WSL_DISTRO` to target a different distro.
+
+Authentication (`kilo auth login`) is done interactively inside the WSL distro —
+each provider's API key is stored in `~/.local/share/kilo/auth.json`, which the
+dotfiles never touch (no credential forwarding needed, unlike Claude Code's
+OAuth token).
 
 ## Derived checkouts (pull-only mirrors)
 
@@ -298,7 +313,10 @@ itself, since that stops every running WSL distro/container.
 Git and `gh` already persist their own auth via your OS credential store /
 keyring — nothing to configure. Claude Code's token is the one gap
 (`claude setup-token` prints a token but doesn't persist it anywhere), so
-it's stored the same way via a synthetic git-credential host. Run once per
+it's stored the same way via a synthetic git-credential host. Kilo Code
+authenticates via `kilo auth login` (per-provider API keys stored in
+`~/.local/share/kilo/auth.json`), which doesn't need a setup script — just
+run it once inside the distro or devcontainer where you want it active. Run once per
 machine:
 
 ```bash
@@ -437,6 +455,12 @@ dotfiles/
 │   │   └── number-one.md      ← orchestrator subagent, see below
 │   └── hooks/
 │       └── block-pr-merge.sh  ← PreToolUse guardrail: blocks gh pr merge / unsafe force-push
+├── kilo/
+│   ├── kilo.jsonc              ← symlinked → ~/.config/kilo/kilo.jsonc (permissions, providers)
+│   ├── tui.jsonc               ← symlinked → ~/.config/kilo/tui.jsonc (theme, notifications)
+│   └── .kilo/
+│       └── agents/
+│           └── number-one.md   ← orchestrator subagent (Kilo frontmatter format)
 ├── starship/
 │   └── starship.toml
 ├── tmux/
