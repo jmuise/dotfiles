@@ -11,7 +11,11 @@ CLAUDE_AGENT="claude/agents/number-one.md"
 KILO_AGENT="kilo/.kilo/agents/number-one.md"
 
 for f in "$CLAUDE_AGENT" "$KILO_AGENT"; do
-  if [ ! -f "$f" ]; then continue 2; fi
+  if [ ! -f "$f" ]; then
+    echo "✖ agent-definition drift guard: $f not found" >&2
+    echo "  Both $CLAUDE_AGENT and $KILO_AGENT must exist and stay in sync." >&2
+    exit 1
+  fi
 done
 
 # Extract body (everything after the second --- delimiter).
