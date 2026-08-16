@@ -183,7 +183,8 @@ Same forwarding pattern as `claude` above — the Kilo Code install lives inside
 the WSL distro, and `powershell/profile.ps1` defines a `kilo` function that
 starts a Kilo session inside Debian with the same argument-forwarding
 guarantees (no cmd.exe, absolute `wsl.exe` path, no `--cd`). Run
-`npm install -g @kilocode/cli` inside the distro to install it there. Set
+`npm install -g @kilocode/cli@7.4.22` inside the distro to install it there
+(pinned deliberately — see `KILO_CLI_VERSION` in `install.py`). Set
 `KILO_WSL_DISTRO` to target a different distro.
 
 Authentication (`kilo auth login`) is done interactively inside the WSL distro —

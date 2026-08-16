@@ -29,7 +29,13 @@ Write-Host "Running 'claude setup-token' - complete the browser/code flow, then 
 Write-Host ""
 claude setup-token
 Write-Host ""
-$Token = Read-Host "Paste the token printed above to store it (blank to abort)"
+$SecureToken = Read-Host "Paste the token printed above to store it (blank to abort)" -AsSecureString
+$BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken)
+try {
+  $Token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR)
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+}
 if ([string]::IsNullOrWhiteSpace($Token)) {
   Write-Host "Aborted - nothing stored."
   exit 1

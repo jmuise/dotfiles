@@ -24,6 +24,12 @@ from pathlib import Path
 DOTFILES = Path(__file__).parent.resolve()
 HOME = Path.home()
 
+# Pinned deliberately (supply-chain hygiene — do not switch to an unpinned or
+# caret/range install). Bump by checking `npm view @kilocode/cli version` and
+# updating this constant (used at both @kilocode/cli install call sites below,
+# and mentioned in README.md).
+KILO_CLI_VERSION = "7.4.22"
+
 # ── args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--dry-run", action="store_true")
@@ -346,19 +352,19 @@ link(DOTFILES / "yazi", HOME / ".config" / "yazi")
 log("Kilo Code CLI...")
 if not is_windows and not shutil.which("kilo"):
     if DRY_RUN:
-        print("  would install kilo via: npm install -g @kilocode/cli")
+        print(f"  would install kilo via: npm install -g @kilocode/cli@{KILO_CLI_VERSION}")
     else:
         _npm = shutil.which("npm")
         if _npm:
             log("Installing Kilo Code...")
-            _r = subprocess.run([_npm, "install", "-g", "@kilocode/cli"],
+            _r = subprocess.run([_npm, "install", "-g", f"@kilocode/cli@{KILO_CLI_VERSION}"],
                                 capture_output=True, text=True, timeout=120)
             if _r.returncode == 0:
                 success("kilo installed")
             else:
                 warn(f"kilo install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
         else:
-            warn("npm not found — skipping kilo install. Run: npm install -g @kilocode/cli")
+            warn(f"npm not found — skipping kilo install. Run: npm install -g @kilocode/cli@{KILO_CLI_VERSION}")
 
 
 # ── SSH ───────────────────────────────────────────────────────────────────────
@@ -440,7 +446,7 @@ if is_devcontainer():
 
     if not shutil.which("kilo") and not DRY_RUN:
         log("Installing Kilo Code in container...")
-        if subprocess.run("npm install -g @kilocode/cli", shell=True).returncode != 0:
+        if subprocess.run(f"npm install -g @kilocode/cli@{KILO_CLI_VERSION}", shell=True).returncode != 0:
             warn("Kilo Code install skipped (no npm or offline)")
 
     if not shutil.which("gh") and not DRY_RUN:

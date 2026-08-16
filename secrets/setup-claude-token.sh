@@ -25,7 +25,8 @@ echo "Running 'claude setup-token' - complete the browser/code flow, then copy t
 echo
 claude setup-token
 echo
-read -rp "Paste the token printed above to store it (blank to abort): " TOKEN
+read -rsp "Paste the token printed above to store it (blank to abort): " TOKEN
+echo
 if [[ -z "$TOKEN" ]]; then
   echo "Aborted - nothing stored."
   exit 1

@@ -17,7 +17,13 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-$Token = Read-Host "Paste your OpenRouter API key (blank to abort)"
+$SecureToken = Read-Host "Paste your OpenRouter API key (blank to abort)" -AsSecureString
+$BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken)
+try {
+  $Token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR)
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+}
 if ([string]::IsNullOrWhiteSpace($Token)) {
   Write-Host "Aborted - nothing stored."
   exit 1

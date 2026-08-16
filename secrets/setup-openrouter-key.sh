@@ -17,7 +17,8 @@ SENTINEL="$CACHE_DIR/openrouter-token.configured"
 command -v git &>/dev/null || { echo "git not found." >&2; exit 1; }
 
 echo "Paste your OpenRouter API key (blank to abort):"
-read -rp "> " TOKEN
+read -rsp "> " TOKEN
+echo
 if [[ -z "$TOKEN" ]]; then
   echo "Aborted - nothing stored."
   exit 1
