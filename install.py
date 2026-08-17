@@ -44,10 +44,18 @@ def success(m): print(f"{GREEN}✔{RESET} {m}")
 def warn(m):    print(f"{YELLOW}⚠{RESET} {m}")
 def error(m):   print(f"{RED}✖{RESET} {m}", file=sys.stderr)
 
-def link(src: Path, dst: Path):
+def link(src: Path, dst: Path) -> bool:
+    """Symlink dst -> src. Returns True iff this changed dst on disk (or would,
+    under --dry-run) -- i.e. dst wasn't already correctly linked to src. Callers
+    use this to tell a real change from a no-op re-link, e.g. to decide whether
+    a shell-init file actually changed and a new shell is needed."""
     src, dst = Path(src), Path(dst)
+    already_linked = dst.is_symlink() and dst.readlink() == src
     if DRY_RUN:
-        print(f"  link: {src} → {dst}"); return
+        print(f"  {'up to date' if already_linked else 'link'}: {src} → {dst}")
+        return not already_linked
+    if already_linked:
+        return False
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.is_symlink():
         dst.unlink()
@@ -55,6 +63,7 @@ def link(src: Path, dst: Path):
         warn(f"Backing up {dst} → {dst}.bak"); dst.replace(str(dst) + ".bak")
     dst.symlink_to(src)
     success(f"linked {dst}")
+    return True
 
 def render(content: str, dst: Path, marker: str):
     dst = Path(dst)
@@ -233,15 +242,21 @@ if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
         success("Removed global core.hooksPath (identity guard retired in favor of shell/doctor.sh)")
 
 # ── shell ─────────────────────────────────────────────────────────────────────
+# Only these files are sourced into a running shell's environment at startup, so
+# only a change here means an already-open shell is stale. Everything else this
+# script links (Claude/Kilo config, git config, VS Code settings, ...) is read
+# fresh by its own tool on every invocation and never needs a shell restart.
 log("Shell...")
-link(DOTFILES / "shell" / "aliases.sh",     HOME / ".aliases")
-link(DOTFILES / "shell" / "exports.sh",     HOME / ".exports")
-link(DOTFILES / "shell" / "doctor.sh",      HOME / ".doctor")
-link(DOTFILES / "shell" / "self-heal.sh",   HOME / ".self-heal")
-link(DOTFILES / "shell" / ".bashrc",        HOME / ".bashrc")
-link(DOTFILES / "shell" / ".bash_profile",  HOME / ".bash_profile")
-link(DOTFILES / "shell" / ".zshrc",         HOME / ".zshrc")
-link(DOTFILES / "shell" / ".zprofile",      HOME / ".zprofile")
+shell_changed = any([
+    link(DOTFILES / "shell" / "aliases.sh",     HOME / ".aliases"),
+    link(DOTFILES / "shell" / "exports.sh",     HOME / ".exports"),
+    link(DOTFILES / "shell" / "doctor.sh",      HOME / ".doctor"),
+    link(DOTFILES / "shell" / "self-heal.sh",   HOME / ".self-heal"),
+    link(DOTFILES / "shell" / ".bashrc",        HOME / ".bashrc"),
+    link(DOTFILES / "shell" / ".bash_profile",  HOME / ".bash_profile"),
+    link(DOTFILES / "shell" / ".zshrc",         HOME / ".zshrc"),
+    link(DOTFILES / "shell" / ".zprofile",      HOME / ".zprofile"),
+])
 
 # ── starship ──────────────────────────────────────────────────────────────────
 log("Starship...")
@@ -530,4 +545,7 @@ if is_macos and not is_devcontainer():
         log("macOS defaults...")
         subprocess.run(["bash", str(defaults_sh)], check=True)
 
-success("Done! Open a new shell or: source ~/.zshrc (or ~/.bashrc)")
+if shell_changed:
+    success("Done! Shell config changed -- open a new shell or: source ~/.zshrc (or ~/.bashrc)")
+else:
+    success("Done! No shell-init files changed -- no new shell needed.")
