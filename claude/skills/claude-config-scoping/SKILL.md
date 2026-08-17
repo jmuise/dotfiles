@@ -10,14 +10,14 @@ There are two tiers that matter day to day.
 - **Global — the Captain's tier.** `~/.claude/`, symlinked from `~/code/dotfiles/claude/` and version-controlled in the dotfiles repo. It describes **the person**: how the Captain works, in every repo, on every machine.
 - **Project — the codebase's tier.** A `.claude/` directory committed inside the project's own repo. It describes **this codebase**: things that are true for anyone working on it, including someone who has never seen the Captain's dotfiles.
 
-Getting this wrong is not cosmetic. Global content that should have been project-scoped follows the Captain into repos where it is false; project content that should have been global has to be rewritten, and re-agreed, in every repo he touches.
+Getting this wrong is not cosmetic. Global content that should have been project-scoped follows the Captain into repos where it is false; project content that should have been global has to be rewritten, and re-agreed, in every repo they touch.
 
 ## The two tests
 
 Apply both, in this order.
 
 1. **Transplant test.** A teammate clones this repo onto a machine with no dotfiles at all. Does the rule still have to hold for their work to be *correct*? If yes → project. If it only makes the work match the Captain's taste → global.
-2. **Suitcase test.** The Captain starts an unrelated project tomorrow. Should this come with him? If yes → global.
+2. **Suitcase test.** The Captain starts an unrelated project tomorrow. Should this come with them? If yes → global.
 
 When both tests say yes, you are looking at a general rule with a project-specific fact stuck to it. Split them: the rule goes global, the fact goes in the project's `CLAUDE.md`. Never put the same thing in both places.
 
