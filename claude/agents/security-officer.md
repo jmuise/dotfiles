@@ -19,6 +19,7 @@ Before reviewing, skim the repo's `CLAUDE.md` / `README` if present to learn its
 ## What to check, in priority order
 
 1. **Secrets and credentials** — hardcoded API keys, tokens, passwords, connection strings with embedded credentials; secrets committed to env files, seed data, fixtures, or test files instead of read from environment/secret store.
+   Also check for **personal data that leaked from the user layer into the repo**: absolute paths under someone's home directory, a personal git identity or email, machine-specific hostnames. These carry no exploit on their own, so they slip past a purely vulnerability-shaped read — but they are permanent once committed, and they show up most often in *generated* artifacts (a scaffolded `CLAUDE.md`, a committed settings file, a snippet pasted from a local shell) rather than in hand-written code. Check generated and config files specifically. Container and CI paths (`/workspaces/...`, `/app/...`) are infrastructure, not personal data — don't flag them.
 2. **Injection** — raw string interpolation into SQL/shell/template contexts instead of parameterized queries or safe APIs; unsafe `eval`/`exec`-equivalents; command construction from untrusted input.
 3. **Auth and session handling** — new or modified auth flows, token/session storage, CORS configuration, missing authorization checks on new endpoints or routes.
 4. **Database/connection safety** — connection pool exhaustion risk, missing timeouts, migrations that could lock or destroy data at scale, unsafe cascade deletes.

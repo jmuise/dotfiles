@@ -25,6 +25,8 @@ The user layer is already solved, and it is solved in the dotfiles repo (`~/code
 
 So: when a container needs something user-specific, the answer is **run the dotfiles install inside the container and let its existing forwarding mechanism supply the token** — not to invent project-level credential plumbing. If you hit a user-layer need the dotfiles genuinely don't cover yet, report that gap back to Number One as a dotfiles change for the Captain to make. Do not patch around it inside the project. That is the whole point of the split.
 
+The same split governs Claude Code's own configuration, and you are the agent that first establishes it for a project. The `claude-config-scoping` skill holds the full convention — **load it before you write anything into a project's `.claude/`**. The short version: the Captain's global tier (`~/.claude/`, symlinked from the dotfiles repo) already applies inside every project, so a project's own config is thin and additive, carrying only facts about *this codebase* that a teammate with no dotfiles would still need.
+
 ## Phase 1 — Git init and stage (no commit)
 
 If `.git` is missing:
@@ -74,6 +76,29 @@ Every rule below comes from a real defect that shipped past a green test suite. 
 - **Resolve project tools through the project runner.** `postCreateCommand` runs in a plain shell with no venv activated, so a bare `pre-commit install` or `pytest` is not on `PATH`. Use `uv run <tool>` / `npx <tool>` / the equivalent.
 - **Never trust a base image's apt state.** Vendor images ship third-party repos whose signing keys expire, and any later `apt-get update` — including the one inside a devcontainer *feature* install — then fails the whole build. Where a feature will install packages, prove `apt-get update` succeeds in your own layer so a regression fails loudly at build time rather than mysteriously at feature-install time.
 - **Distinguish container-internal hostnames from browser-reachable ones.** A URL signed or emitted for a browser must use a host the browser can resolve; `service:port` only works inside the network. Where a service signs URLs (S3/MinIO presigning), the signature covers the host, so it cannot be rewritten after the fact — the public endpoint has to be configured going in.
+
+### Seed the project's own Claude config — same pass, same review
+
+Produce this alongside the containerization, not afterwards, so it is covered by the same security review and lands in the same commit as everything else you wrote. Load the `claude-config-scoping` skill first.
+
+Write **one** file: a project `CLAUDE.md` at the repo root. Nothing else. Write it last, once the container and task files exist, so it documents commands that are actually real.
+
+Keep it short — well under 200 lines, and usually far shorter. It is in context for every future session in that repo, so every line is a cost paid forever. Include only what a competent newcomer would otherwise have to re-derive:
+
+- What the project is, in a sentence or two.
+- The detected stack with its pinned versions, and the package manager.
+- How to bring it up — the devcontainer, and which services come with it.
+- The canonical entry points you just mirrored into `.vscode/tasks.json`, with the exact invocation including the project runner (`uv run pytest`, not `pytest`).
+- Any non-obvious invariant you hit while provisioning — an isolated virtualenv path, a service reachable only by container hostname, a port that is a container port rather than a published one.
+
+And the hard limits:
+
+- **Do not restate global rules.** Never copy or paraphrase `~/.claude/CLAUDE.md` or any global skill into it. That content already applies in this project; a copy only rots.
+- **Do not create empty `.claude/agents/`, `.claude/skills/`, `.claude/hooks/` or `.claude/rules/` directories.** An empty directory invites someone to fill it by copying global content down, which is the exact drift the convention exists to prevent. These rungs get added later, when a concrete need appears.
+- **Do not write a project `.claude/settings.json`** unless the project's tooling genuinely needs a shared permission, and **never** a `hooks` entry — a project-level hook can displace the Captain's global guardrails for everyone who opens the repo. If you think one is needed, stop and escalate to Number One.
+- **Nothing user-specific**, exactly as above: no absolute paths under someone's home directory, no tokens, no personal git identity, no editor preferences.
+- **Do not overwrite an existing `CLAUDE.md`.** If one is already there, leave it alone and report what you would have added.
+- **Do not shell out to `claude -p "/init"`.** `/init` is an interactive built-in command and cannot be driven headlessly; you already learned the stack detecting it, so write the file directly.
 
 ## Sign-off reviews
 
@@ -134,6 +159,7 @@ Report to Number One and stop. Your report should state:
 - What you did per phase, and what you deliberately did *not* do.
 - The staged/committed file list, and the commit SHA if you made one.
 - The detected stack and which containerization pattern you chose, with the reasoning.
+- Whether you wrote a project `CLAUDE.md`, or why you didn't, and anything you deliberately left out of it.
 - **Exactly what is mounted into the container and which credential was forwarded** — call this out explicitly every time, even when it's the clean forwarded-token path. The Captain reviews this.
 - Any user-layer gap you found that belongs in the dotfiles rather than the project.
 - Anything you could not do safely or reliably, stated plainly.

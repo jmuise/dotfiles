@@ -11,7 +11,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git, `claude` → WSL forwarding, `kilo` → WSL forwarding) + a Windows PowerShell 5.1 shim that hands off to pwsh |
 | `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
-| `claude/` | Claude Code global config (`CLAUDE.md`, `settings.json`), plus `agents/` (the `number-one` orchestrator subagent) and `hooks/` (a `PreToolUse` guardrail blocking PR-merge/force-push commands) |
+| `claude/` | Claude Code **global** config (`CLAUDE.md`, `settings.json`), plus `agents/` (the subagent roster, led by the `number-one` orchestrator), `skills/` (on-demand procedural knowledge, including the global-vs-project config-scoping convention) and `hooks/` (`PreToolUse` guardrails blocking PR-merge/force-push and AI-attribution lines) |
 | `kilo/` | Kilo Code global config (`kilo.jsonc`, `tui.jsonc`), plus `.kilo/agents/` (the `number-one` orchestrator subagent in Kilo's frontmatter format). `AGENTS.md` is symlinked from `claude/CLAUDE.md` — one source of truth for global rules shared by both tools. |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
@@ -113,9 +113,24 @@ token (see [secrets/README.md](secrets/README.md)).
 
 ## Claude Code
 
-`claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns.
+`claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns. `claude/hooks/block-ai-attribution.sh` is wired the same way and blocks AI-attribution lines from reaching git history or any repo artifact.
 
-Number One can also grow the roster itself: when it identifies a recurring role (e.g. a "graphic-designer" or "devops-engineer" specialist), it's free to author a new subagent definition under `~/.claude/agents/`. Since that directory is symlinked straight into this repo's `claude/agents/`, new files it creates show up here under version control automatically — expect them to appear as untracked files from time to time, and review them like any other change before committing. It won't commit or push on your behalf.
+Alongside Number One the roster carries `chief-engineer` (fresh-project provisioning and dev-environment sign-off), `security-officer` (independent read-only review), `implementation-engineer` (scoped implementation through to a CI-green PR), and `duty-officer` (cheap read-only status checks). `claude/skills/` holds procedural knowledge that loads on demand instead of being retyped into every brief — verification discipline, PR/branch hygiene, the dotfiles commit protocol, the security-review checklist, and the config-scoping convention below.
+
+Number One can also grow the roster itself: when it identifies a recurring role (e.g. a "graphic-designer" or "devops-engineer" specialist), it's free to author a new subagent definition under `~/.claude/agents/`, or a new skill under `~/.claude/skills/`. Since those directories are symlinked straight into this repo's `claude/`, new files it creates show up here under version control automatically — expect them to appear as untracked files from time to time, and review them like any other change before committing. It won't commit or push on your behalf.
+
+### Global config vs. a project's own `.claude/`
+
+Everything under `claude/` here is the **global** tier: it describes *you*, and it applies in every repo on every machine. Claude Code also reads a **project** tier — a `.claude/` directory committed inside an individual project's repo — which describes *that codebase*, and applies to anyone who clones it whether or not they have these dotfiles.
+
+The split, in one line each: global is how you like to work; project is what is true about this code. The full convention (which rung to reach for, why project config stays thin and additive rather than a copy of the global tier, and how a newly provisioned project gets seeded) lives in `claude/skills/claude-config-scoping/SKILL.md`, so agents load it on demand rather than re-deriving it per project. `chief-engineer` applies it when provisioning: a fresh project gets a thin project `CLAUDE.md` documenting its stack and entry points, and deliberately nothing else — no empty `agents/`/`skills/`/`hooks/` directories to tempt anyone into copying global content down into them.
+
+Two behaviours of the project tier are worth knowing before you trust a repo you didn't write, both confirmed by experiment rather than documentation:
+
+- **A project agent whose `name` matches a global one replaces it silently** — the global definition disappears from the list entirely, with no warning. A repo shipping its own `security-officer` would review itself. Project-scoped names should be repo-prefixed so this can't happen by accident.
+- **Project agents, skills and `CLAUDE.md` are active in an untrusted directory, with no prompt.** Workspace trust gates a project's `permissions.allow` entries (they're discarded with a warning until you accept), but it does not gate instruction-shaped config. So reading an unfamiliar repo's `.claude/` belongs in the same pass as reading its build scripts.
+
+In every case tested the global guardrail hooks still fired and still blocked, including from inside a project that defined competing hooks of its own — but that's a property to re-confirm when the stack changes, not one to assume.
 
 ### `claude` on native Windows → WSL
 
@@ -452,10 +467,21 @@ dotfiles/
 │   ├── CLAUDE.md
 │   ├── settings.json
 │   ├── statusline-command.sh
-│   ├── agents/
-│   │   └── number-one.md      ← orchestrator subagent, see below
+│   ├── agents/                ← global subagent roster, see below
+│   │   ├── number-one.md          ← orchestrator
+│   │   ├── chief-engineer.md      ← fresh-project provisioning + dev-env sign-off
+│   │   ├── security-officer.md    ← independent read-only review
+│   │   ├── implementation-engineer.md
+│   │   └── duty-officer.md        ← cheap read-only status checks
+│   ├── skills/                ← procedural knowledge, loaded on demand
+│   │   ├── claude-config-scoping/     ← global tier vs. a project's own .claude/
+│   │   ├── verification-discipline/
+│   │   ├── pr-branch-hygiene/
+│   │   ├── dotfiles-commit-protocol/
+│   │   └── security-review-checklist/
 │   └── hooks/
-│       └── block-pr-merge.sh  ← PreToolUse guardrail: blocks gh pr merge / unsafe force-push
+│       ├── block-pr-merge.sh       ← PreToolUse guardrail: blocks gh pr merge / unsafe force-push
+│       └── block-ai-attribution.sh ← PreToolUse guardrail: blocks AI-attribution lines
 ├── kilo/
 │   ├── kilo.jsonc              ← symlinked → ~/.config/kilo/kilo.jsonc (permissions, providers)
 │   ├── tui.jsonc               ← symlinked → ~/.config/kilo/tui.jsonc (theme, notifications)
