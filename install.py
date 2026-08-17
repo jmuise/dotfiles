@@ -421,6 +421,7 @@ link(DOTFILES / "claude" / "settings.json",          claude_dir / "settings.json
 link(DOTFILES / "claude" / "statusline-command.sh",  claude_dir / "statusline-command.sh")
 link(DOTFILES / "claude" / "agents",                 claude_dir / "agents")
 link(DOTFILES / "claude" / "hooks",                  claude_dir / "hooks")
+link(DOTFILES / "claude" / "skills",                 claude_dir / "skills")
 
 # ── Kilo Code ───────────────────────────────────────────────────────────────────
 # Same schema, same structure as the ~/.config/kilo/ directory Kilo itself
