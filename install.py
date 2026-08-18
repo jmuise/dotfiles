@@ -485,6 +485,12 @@ link(DOTFILES / "claude" / "CLAUDE.md",              kilo_config_dir / "AGENTS.m
 link(DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jsonc")
 link(DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc")
 link(DOTFILES / "kilo" / ".kilo",                    kilo_config_dir / ".kilo")
+# Plugin directory must be a real symlink, not just a config-file reference:
+# kilo.jsonc's `plugin` array resolves relative paths against the *literal*
+# path of the config file (this symlink target's parent), not its realpath,
+# so without this the require-devcontainer plugin would silently fail to load
+# -- confirmed empirically, no error, no log line, the hook just never fires.
+link(DOTFILES / "kilo" / "plugin",                   kilo_config_dir / "plugin")
 
 # ── GitHub Copilot CLI ───────────────────────────────────────────────────────────
 # Same one-source-of-truth pattern as Kilo above — Copilot CLI reads global

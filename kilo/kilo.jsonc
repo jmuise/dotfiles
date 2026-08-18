@@ -30,6 +30,14 @@
     }
   },
 
+  // Devcontainer guardrail -- ports claude/hooks/require-devcontainer.sh to
+  // Kilo via a thin plugin shim (see kilo/plugin/require-devcontainer.ts for
+  // why it's a shim and not a reimplementation). install.py symlinks
+  // ~/.config/kilo/plugin to kilo/plugin, so this also auto-registers via
+  // Kilo's plugin-directory discovery; listed explicitly here too so the
+  // wiring is visible without needing to know that discovery exists.
+  "plugin": ["./plugin/require-devcontainer.ts"],
+
   // Permission rules — mirror claude/hooks/block-pr-merge.sh: never merge,
   // never force-push to protected branches. Kilo enforces these natively via
   // the permission config rather than requiring an external hook script.
