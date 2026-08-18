@@ -24,7 +24,17 @@
 # one. Matching scope too eagerly is harmless, since a block only fires when an
 # attribution string is *also* present; matching it too narrowly fails silently,
 # which is the worst possible outcome for a guard like this.
-set -euo pipefail
+#
+# PreToolUse treats only exit 2 as a block -- every other non-zero exit (jq
+# missing, a malformed payload, an unset variable) is non-blocking and the tool
+# call proceeds anyway, so an unhandled failure here would silently disable this
+# guard for that call. The ERR trap turns any such failure into a block instead.
+# `-E` makes the trap inherit into functions and subshells.
+set -Eeuo pipefail
+# A failure inside a command substitution prints this twice -- once in the
+# subshell, once when the parent re-checks the failed assignment. The exit
+# code is 2 either way, so the duplication is left alone.
+trap 'echo "BLOCKED by claude/hooks/block-ai-attribution.sh: the guard itself failed unexpectedly near line $LINENO, so this call is refused rather than silently allowed. This is a bug in the hook, not in your command -- report it to the Captain." >&2; exit 2' ERR
 
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
