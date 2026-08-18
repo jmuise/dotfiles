@@ -258,6 +258,13 @@ shell_changed = any([
     link(DOTFILES / "shell" / ".zprofile",      HOME / ".zprofile"),
 ])
 
+# ── editor ────────────────────────────────────────────────────────────────────
+# Read fresh from PATH on every invocation, like starship.toml below — doesn't
+# need shell_changed / a shell restart. See tools/smart-editor.sh for why this
+# exists instead of hardcoding `code --wait`.
+log("Editor...")
+link(DOTFILES / "tools" / "smart-editor.sh", HOME / ".local" / "bin" / "smart-editor")
+
 # ── starship ──────────────────────────────────────────────────────────────────
 log("Starship...")
 if is_linux and not shutil.which("starship"):
