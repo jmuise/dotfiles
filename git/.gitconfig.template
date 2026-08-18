@@ -29,6 +29,17 @@
 	line-numbers = true
 	side-by-side = false
 	dark        = true
+	# Terminal colors have no alpha channel, so any painted background is
+	# fully opaque. Omitting the background (foreground-only) is what lets
+	# the terminal's own transparency show through instead.
+	plus-style  = syntax
+	minus-style = syntax
+	# A background here paints the full column width even when that side's
+	# number is blank (e.g. the old-file column on an added line), leaving a
+	# solid empty bar. Bold foreground color alone makes the numbers pop
+	# without that.
+	line-numbers-plus-style  = bold green
+	line-numbers-minus-style = bold red
 
 [fetch]
 	prune     = true
