@@ -25,6 +25,7 @@ direnv
 unzip
 
 # Node.js — provides npm, needed for Kilo Code CLI install (npm install -g @kilocode/cli)
+# and GitHub Copilot CLI install (npm install -g @github/copilot)
 nodejs
 npm
 

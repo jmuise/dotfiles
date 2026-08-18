@@ -30,6 +30,11 @@ HOME = Path.home()
 # and mentioned in README.md).
 KILO_CLI_VERSION = "7.4.22"
 
+# Same rationale as KILO_CLI_VERSION above. Bump by checking
+# `npm view @github/copilot version` and updating this constant (used at both
+# @github/copilot install call sites below, and mentioned in README.md).
+COPILOT_CLI_VERSION = "1.0.80"
+
 # ── args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--dry-run", action="store_true")
@@ -388,6 +393,29 @@ if not is_windows and not shutil.which("kilo"):
         else:
             warn(f"npm not found — skipping kilo install. Run: npm install -g @kilocode/cli@{KILO_CLI_VERSION}")
 
+# ── GitHub Copilot CLI ───────────────────────────────────────────────────────────
+# Same npm-global pattern as Kilo above. Authenticates automatically from the
+# GH_TOKEN already exported by shell/exports.sh (Copilot CLI checks
+# COPILOT_GITHUB_TOKEN, then GH_TOKEN, then GITHUB_TOKEN) — no separate secrets
+# plumbing needed. On Windows, not installed natively — powershell/profile.ps1
+# forwards `copilot` into the WSL distro, same pattern as `claude`/`kilo`.
+log("GitHub Copilot CLI...")
+if not is_windows and not shutil.which("copilot"):
+    if DRY_RUN:
+        print(f"  would install copilot via: npm install -g @github/copilot@{COPILOT_CLI_VERSION}")
+    else:
+        _npm = shutil.which("npm")
+        if _npm:
+            log("Installing GitHub Copilot CLI...")
+            _r = subprocess.run([_npm, "install", "-g", f"@github/copilot@{COPILOT_CLI_VERSION}"],
+                                capture_output=True, text=True, timeout=120)
+            if _r.returncode == 0:
+                success("copilot installed")
+            else:
+                warn(f"copilot install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
+        else:
+            warn(f"npm not found — skipping copilot install. Run: npm install -g @github/copilot@{COPILOT_CLI_VERSION}")
+
 
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")
@@ -458,6 +486,13 @@ link(DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jso
 link(DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc")
 link(DOTFILES / "kilo" / ".kilo",                    kilo_config_dir / ".kilo")
 
+# ── GitHub Copilot CLI ───────────────────────────────────────────────────────────
+# Same one-source-of-truth pattern as Kilo above — Copilot CLI reads global
+# instructions from ~/.copilot/copilot-instructions.md, symlinked straight from
+# claude/CLAUDE.md rather than duplicated.
+log("GitHub Copilot CLI global config...")
+link(DOTFILES / "claude" / "CLAUDE.md", HOME / ".copilot" / "copilot-instructions.md")
+
 # ── devcontainer extras ───────────────────────────────────────────────────────
 if is_devcontainer():
     log("Devcontainer extras...")
@@ -471,6 +506,11 @@ if is_devcontainer():
         log("Installing Kilo Code in container...")
         if subprocess.run(f"npm install -g @kilocode/cli@{KILO_CLI_VERSION}", shell=True).returncode != 0:
             warn("Kilo Code install skipped (no npm or offline)")
+
+    if not shutil.which("copilot") and not DRY_RUN:
+        log("Installing GitHub Copilot CLI in container...")
+        if subprocess.run(f"npm install -g @github/copilot@{COPILOT_CLI_VERSION}", shell=True).returncode != 0:
+            warn("GitHub Copilot CLI install skipped (no npm or offline)")
 
     if not shutil.which("gh") and not DRY_RUN:
         log("Installing gh in container...")
