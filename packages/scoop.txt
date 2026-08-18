@@ -25,7 +25,7 @@ main/yazi
 
 # Language runtimes
 main/python
-main/nodejs            # provides npm for Kilo Code CLI install
+main/nodejs            # provides npm for Kilo Code CLI and GitHub Copilot CLI installs
 
 # Editor
 main/neovim

@@ -97,6 +97,17 @@ if (Test-Path "$env:SystemRoot\System32\wsl.exe") {
     $launch = 'PATH=$HOME/.local/bin:$HOME/bin:$PATH; if ! command -v kilo >/dev/null 2>&1 && [ -s $HOME/.nvm/nvm.sh ]; then . $HOME/.nvm/nvm.sh >/dev/null 2>&1; fi; command -v kilo >/dev/null 2>&1 || { echo kilo: Kilo Code is not installed in the $WSL_DISTRO_NAME WSL distro. Install it there, then retry. 1>&2; exit 127; }; case $(command -v kilo) in /mnt/*) echo kilo: only a Windows kilo is visible from inside WSL - refusing to recurse. Install Kilo Code in the distro. 1>&2; exit 127;; esac; exec kilo "$@"'
     & "$env:SystemRoot\System32\wsl.exe" -d $distro -e bash -lc $launch kilo @args
   }
+
+  # Same forwarding pattern as claude/kilo above — GitHub Copilot CLI lives in
+  # the WSL distro too, so type `copilot` in pwsh and it runs inside WSL. See
+  # the comment block above claude for the security rationale (wsl.exe is a
+  # real .exe, arguments are passed verbatim as argv, no cmd.exe re-parsing
+  # layer).
+  function copilot {
+    $distro = if ($env:COPILOT_WSL_DISTRO) { $env:COPILOT_WSL_DISTRO } else { "Debian" }
+    $launch = 'PATH=$HOME/.local/bin:$HOME/bin:$PATH; if ! command -v copilot >/dev/null 2>&1 && [ -s $HOME/.nvm/nvm.sh ]; then . $HOME/.nvm/nvm.sh >/dev/null 2>&1; fi; command -v copilot >/dev/null 2>&1 || { echo copilot: GitHub Copilot CLI is not installed in the $WSL_DISTRO_NAME WSL distro. Install it there, then retry. 1>&2; exit 127; }; case $(command -v copilot) in /mnt/*) echo copilot: only a Windows copilot is visible from inside WSL - refusing to recurse. Install GitHub Copilot CLI in the distro. 1>&2; exit 127;; esac; exec copilot "$@"'
+    & "$env:SystemRoot\System32\wsl.exe" -d $distro -e bash -lc $launch copilot @args
+  }
 }
 
 # ── prompt ────────────────────────────────────────────────────────────────────
