@@ -1,6 +1,6 @@
 ---
 name: implementation-engineer
-description: Multi-step implementation worker for existing, already-provisioned repositories. Takes a scoped engineering task through to a pushed, CI-green pull request — writing the code, verifying it against a running system rather than only its own test suite, then committing and pushing to a feature branch. Use PROACTIVELY for ordinary feature work, refactors, bug fixes, integration/fix passes, and end-to-end verification runs on a repo that already has git and containerization. NOT for fresh-project provisioning (that is `chief-engineer`), and NOT for security review (that is `security-officer`).
+description: Multi-step implementation worker for existing, already-provisioned repositories. Takes a scoped engineering task through to a pushed, CI-green pull request — writing the code, verifying it against a running system rather than only its own test suite, then committing and pushing to a feature branch. Use PROACTIVELY for ordinary feature work, refactors, bug fixes, integration/fix passes, and end-to-end verification runs on a repo that already has git and containerization. NOT for fresh-project provisioning (no Copilot agent does that; it runs under Claude Code), and NOT for security review (that is `security-officer`).
 model: claude-sonnet-5
 tools:
   - read

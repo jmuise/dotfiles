@@ -18,31 +18,33 @@
 # which the guard is silently gone. config.json's own header says as much ("User
 # settings belong in settings.json. This file is managed automatically.").
 #
-# KNOWN LIMITATION -- chief-engineer IS KNOWINGLY BLOCKED. Unlike the Claude Code
-# hook, this port has no chief-engineer exemption: `agent_type` below is hardcoded
-# to "copilot", and "chief-engineer" is the only value the bash script treats as
-# exempt. Say the consequence plainly rather than pretend the role does not exist
-# here -- this repo ships copilot/agents/chief-engineer.agent.md, which is exactly
-# the host-bootstrap role the Claude Code exemption was written for. Under Copilot
-# that agent WILL be blocked partway through provisioning: its `git init` succeeds
-# (until it runs, the directory is not a git repo, so the guard is out of scope),
-# and from the instant that repo exists every following `git add`, `git commit` and
-# `docker build` is a call against a non-containerized git project and is denied --
-# leaving a half-initialized repo.
+# NO EXEMPTION EXISTS HERE, AND NOTHING SHIPPED NEEDS ONE. `agent_type` below is
+# hardcoded to "copilot", and the bash script exempts exactly one value --
+# "chief-engineer", the Claude Code host-bootstrap role. So under Copilot the
+# exemption path is unreachable by construction. That is the intended permanent
+# state, not an interim gap waiting on a fix.
 #
-# That is accepted as an interim state, because there is no honest way to grant the
-# exemption here. Copilot's preToolUse payload carries NO agent identity at all
-# (sessionId, timestamp, cwd, toolName, toolArgs -- that is the whole of it), so
-# this shim cannot distinguish chief-engineer's calls from any other agent's. The
-# only "exemption" available would be a blanket one keyed off nothing, which is not
-# an exemption, it is switching the guard off. Failing loudly and early beats that.
-# The mitigation is procedural and lives where it can be read before the damage:
-# copilot/agents/chief-engineer.agent.md carries a prominent warning that host-side
-# provisioning must be run under Claude Code instead. If Copilot ever grows a hook
-# payload identifying the calling agent -- or the Captain decides Copilot needs its
-# own provisioning path onto the host -- that is a decision for the Captain, not a
-# default this shim assumes. Do not invent an exemption here in the meantime. The
-# Kilo port carries the same limitation, for the same reason.
+# It has to be unreachable, because there is no honest way to grant it. Copilot's
+# preToolUse payload carries NO agent identity at all (sessionId, timestamp, cwd,
+# toolName, toolArgs -- that is the whole of it), so this shim cannot tell one
+# agent's calls from another's. The only "exemption" available would be a blanket
+# one keyed off nothing, which is not an exemption, it is switching the guard off.
+#
+# The resolution is scope, not a workaround: the Copilot agent roster deliberately
+# ships no agent that would need the exemption. Host bootstrap necessarily happens
+# before a container exists, so it runs under Claude Code, whose hook receives a
+# real agent identity and exempts chief-engineer by name. copilot/agents/ therefore
+# carries review, implementation and orchestration roles only, and
+# copilot/agents/number-one.agent.md states plainly that fresh-project provisioning
+# is not a capability this roster has. Nothing here is one hardcoded string away
+# from working; there is simply no Copilot caller for that string to match.
+#
+# If Copilot ever grows a hook payload identifying the calling agent -- or the
+# Captain decides Copilot needs its own provisioning path onto the host -- that is
+# a decision for the Captain, not a default this shim assumes. Do not invent an
+# exemption here in the meantime. The Kilo port sits in the same position and is
+# resolved the same way: it hardcodes agent_type to "kilo" and ships no
+# provisioning role either.
 #
 # COMPENSATING FOR A REAL REGRESSION -- stderr is DISCARDED. Claude Code hands the
 # blocked agent a hook's stderr verbatim; Copilot throws it away and shows only
