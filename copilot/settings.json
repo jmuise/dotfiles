@@ -1,0 +1,148 @@
+// GitHub Copilot CLI user-level settings.
+//
+// Comments are JSONC line comments on purpose. A `"//"` string key is the other
+// obvious way to annotate a JSON config, and Copilot REJECTS it with
+// `Warning: Ignoring unknown top-level key(s) in user settings file ... "//"`.
+// These `//` comments parse silently. Verified both ways against the live CLI.
+//
+// HOOKS MUST LIVE HERE, NOT IN config.json. Put them in config.json and they
+// appear to work exactly once, after which the CLI migrates them out, logs
+// `Settings migration: "hooks" differs...` and deletes them -- leaving the
+// devcontainer guard silently gone with nothing to notice. config.json says as
+// much in its own header ("User settings belong in settings.json. This file is
+// managed automatically."), so it is deliberately never symlinked.
+// install.py symlinks THIS file to ~/.copilot/settings.json, and copilot/hooks
+// to ~/.copilot/hooks.
+//
+// THAT SYMLINK IS NOT DURABLE, AND THESE COMMENTS DO NOT SURVIVE THE CLI. Copilot
+// writes settings atomically -- temp file plus rename -- so when it saves settings
+// it REPLACES ~/.copilot/settings.json with a regular file rather than writing
+// through the link. Observed twice against an isolated COPILOT_HOME. Two
+// consequences, both mundane to trigger (`copilot skill add`, `copilot plugin
+// install`, `/memory on|off`, `/settings ...` all do it):
+//   * Every `//` comment in this file is destroyed and the hook schema is
+//     normalized. The hook block itself survived and kept firing in both tests, so
+//     the guard does not silently die -- but the annotation explaining it does.
+//   * From that moment this file is NO LONGER the source of truth for the live
+//     config. Edits here to the matcher, the timeout, the hook path or the key
+//     below are inert until install.py runs again.
+// Nothing leaks the other way: the CLI does not write into this repo. install.py
+// checks for the detached case on every run and warns loudly; to check by hand,
+// `ls -l ~/.copilot/settings.json` and confirm it is still a symlink into
+// ~/code/dotfiles/copilot/. To repair it, re-run install.py.
+{
+  // NO CO-AUTHORED-BY TRAILERS. This is not cosmetic, and it is not a setting
+  // restating prose -- it is the one mechanical enforcement this file can give a
+  // rule that is otherwise entirely unenforced under Copilot.
+  //
+  // claude/CLAUDE.md forbids AI-attribution lines in any artifact, and under
+  // Claude Code claude/hooks/block-ai-attribution.sh enforces that. That hook is
+  // NOT ported to Copilot. Worse, the Copilot CLI defaults the other way and
+  // actively instructs the agent to add the trailer: its own settings registry
+  // describes this key as "Add a Co-authored-by trailer to commits", and app.js
+  // wires it as `coauthorEnabled: T.includeCoAuthoredBy !== !1` -- anything other
+  // than an explicit `false` enables it. Omitting the key is therefore not
+  // neutral, it opts in.
+  //
+  // Verified against the shipped v1.0.80 runtime: `includeCoAuthoredBy` is on the
+  // CLI's canonical top-level settings key list (runtime.node's
+  // userSettingsKeysJson), so it is accepted here and does not trip the
+  // "Ignoring unknown top-level key(s)" warning.
+  "includeCoAuthoredBy": false,
+
+  "hooks": {
+    "preToolUse": [
+      {
+        // MATCHER IS `.*` DELIBERATELY -- do not narrow it back to a name list.
+        //
+        // It used to be an exact-name allowlist
+        // (bash|create|edit|apply_patch|str_replace_editor), assembled from the
+        // tool names observed across a few model families plus one unverified
+        // guess. That is a silent fail-open: any tool name Copilot uses that is
+        // not on the list gets NO hook at all, and the list's completeness cannot
+        // be verified against a packed binary whose tool roster is not
+        // enumerable. Matching everything collapses the risk from "this name list
+        // must stay complete forever" to "the shim's case statement must classify
+        // correctly" -- testable code under our control, where a miss is visible.
+        //
+        // The cost is one short process per tool call: the shim exits 0 after a
+        // single jq spawn (~16ms measured) for every out-of-scope name -- view,
+        // grep, glob, skill, sql, web_fetch and the rest.
+        //
+        // Matchers compile as `^(?:PATTERN)$` (Rust regex, full match). An
+        // INVALID one makes the CLI log `Invalid matcher regex ... hook will be
+        // skipped` and run nothing at all, which is another fail-open. Any edit
+        // here must be re-verified by observing an actual block, not by reading.
+        //
+        // AN UNPARSEABLE *FILE* IS THE SAME FAILURE CLASS AND STRICTLY WORSE,
+        // BECAUSE IT IS COMPLETELY SILENT. Observed: with one syntax error
+        // injected into ~/.copilot/settings.json, the CLI printed NO warning and
+        // NO error, the hook never ran, and a write landed in a guarded repo. The
+        // invalid matcher above at least logs a line to look for; a parse failure
+        // logs nothing at all, so the only symptom is a session that is quietly
+        // unguarded. (An unknown top-level KEY does warn -- "Ignoring unknown
+        // top-level key(s)" -- and trailing commas are tolerated. It is
+        // specifically the parse failure that is silent.) This file is
+        // hand-maintained JSONC with ~80 comment lines, so that is a live risk on
+        // every edit rather than a hypothetical one. install.py therefore parses
+        // this file on EVERY run and fails loudly if it does not parse, catching a
+        // broken edit at install time instead of via a bypass nobody sees. Do not
+        // remove that check, and re-run install.py after editing this file rather
+        // than assuming the guard survived.
+        //
+        // OUT OF SCOPE, NOT A GAP TO CLOSE: MCP tool calls never fire preToolUse.
+        // They raise a separate `preMcpToolCall` event that no preToolUse matcher
+        // sees, however wide -- `.*` does not reach them and nothing in this entry
+        // can. Do not try to fix that from here.
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.copilot/hooks/require-devcontainer.sh\"",
+
+            // TIMEOUT IS PINNED, NOT INHERITED, AND THE FAIL-OPEN BEHIND IT IS
+            // REAL. A preToolUse hook that times out has its tool call ALLOWED
+            // through, and no setting makes a timeout fail closed. That is
+            // confirmed, not inferred: the shipped v1.0.80 runtime
+            // (node_modules/@github/copilot-linux-x64/prebuilds/linux-x64/runtime.node)
+            // carries the message template `timed out; allowing the tool call to
+            // proceed:` in its string table, right beside `Denied by preToolUse
+            // hook:` and the errored-hook wording `(fail-closed):`. Errors fail
+            // closed; timeouts do not. Since the bound cannot be removed it is at
+            // least stated explicitly here rather than inherited from a default a
+            // CLI release can change under us. Measured runtimes (median, this
+            // machine): ~14ms for an out-of-scope tool, ~83ms for a bash call,
+            // ~41ms per additional path in a multi-file apply_patch, ~8.3s for a
+            // 200-path one. Those are the ORDINARY costs; the worst cases are
+            // below and are an order of magnitude larger.
+            //
+            // The numbers that do the real work are NOT this one -- they are the
+            // shim's own MAX_PAYLOAD_BYTES, MAX_TARGET_PATHS and
+            // GUARD_BUDGET_SECONDS, each of which DENIES on exceed. Be accurate
+            // about what they achieve: they make the fail-open HARD TO REACH, they
+            // do NOT make it unreachable.
+            //
+            // RE-MEASURED TWICE, AND BOTH EARLIER FIGURES HERE WERE WRONG IN THE
+            // FLATTERING DIRECTION (~10s, then ~19.9s). Worst case MEASURED is
+            // ~20.4s against this 30s; the CEILING the shim's arithmetic actually
+            // permits is JUST UNDER 21s, in both directions. That is a margin of
+            // roughly 1.43x, not 3x and not 1.5x -- and 21s is the number to cite,
+            // because the measurements are only a lower bound on it.
+            // Both worst cases are set by GUARD_BUDGET_SECONDS (20s) rather than by
+            // the payload ceiling, and the extra second past 20 is not slop: the
+            // budget is checked at the TOP of each guard iteration so an
+            // already-started spawn can overshoot it, and the per-spawn deadline is
+            // derived from bash's whole-second `SECONDS`, so a spawn beginning at
+            // 19.99s elapsed is handed a full extra second and dies at ~21.0s. The
+            // shim's own header carries the full measured table and the arithmetic.
+            // Treat 20 and 30 as a matched pair. A slower machine, or a wedge
+            // `timeout` cannot interrupt, could still cross 30s and be allowed
+            // unguarded. The ordering is the invariant: every bound in the shim
+            // stays BELOW this timeoutSec. Change one, change all, keep the gap.
+            "timeoutSec": 30
+          }
+        ]
+      }
+    ]
+  }
+}

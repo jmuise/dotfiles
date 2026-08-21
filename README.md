@@ -11,8 +11,9 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git, `claude` → WSL forwarding, `kilo` → WSL forwarding, `copilot` → WSL forwarding) + a Windows PowerShell 5.1 shim that hands off to pwsh |
 | `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
-| `claude/` | Claude Code **global** config (`CLAUDE.md`, `settings.json`), plus `agents/` (the subagent roster, led by the `number-one` orchestrator), `skills/` (on-demand procedural knowledge, including the global-vs-project config-scoping convention) and `hooks/` (`PreToolUse` guardrails blocking PR-merge/force-push and AI-attribution lines) |
-| `kilo/` | Kilo Code global config (`kilo.jsonc`, `tui.jsonc`), plus `.kilo/agents/` (the `number-one` orchestrator subagent in Kilo's frontmatter format). `AGENTS.md` is symlinked from `claude/CLAUDE.md` — one source of truth for global rules shared by both tools. GitHub Copilot CLI gets no directory of its own — `install.py` symlinks its `~/.copilot/copilot-instructions.md` straight from `claude/CLAUDE.md` too, same pattern, same source of truth. |
+| `claude/` | Claude Code **global** config (`CLAUDE.md`, `settings.json`), plus `agents/` (the subagent roster, led by the `number-one` orchestrator), `skills/` (on-demand procedural knowledge, including the global-vs-project config-scoping convention) and `hooks/` (`PreToolUse` guardrails blocking PR-merge/force-push and AI-attribution lines, plus the devcontainer guard the other two CLIs defer to). This directory is the source of truth the Kilo and Copilot config below borrows from rather than copies — see [Sharing the roster](#sharing-the-roster-with-kilo-and-copilot) |
+| `kilo/` | Kilo Code global config (`kilo.jsonc`, `tui.jsonc`), plus `plugin/` (a thin shim porting the devcontainer guard to Kilo) and `.kilo/agents/` (the `number-one` orchestrator subagent in Kilo's frontmatter format — the only one of the five ported so far, and Kilo gets no skills wiring at all). `AGENTS.md` is symlinked from `claude/CLAUDE.md` |
+| `copilot/` | GitHub Copilot CLI global config: `settings.json` (the `preToolUse` hook wiring plus `includeCoAuthoredBy: false`), `hooks/` (a shim porting the same devcontainer guard) and `agents/` (all five subagents, hand-translated into Copilot's `*.agent.md` schema). `copilot-instructions.md` and `skills/` are symlinked straight from `claude/CLAUDE.md` and `claude/skills/` — same pattern, same source of truth |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.template` (rendered to `~/.ssh/config`, no keys) |
@@ -113,11 +114,164 @@ token (see [secrets/README.md](secrets/README.md)).
 
 ## Claude Code
 
-`claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns. `claude/hooks/block-ai-attribution.sh` is wired the same way and blocks AI-attribution lines from reaching git history or any repo artifact.
+`claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns. `claude/hooks/block-ai-attribution.sh` is wired the same way and blocks AI-attribution lines from reaching git history or any repo artifact. A third guardrail, `claude/hooks/require-devcontainer.sh`, keeps project work inside that project's devcontainer instead of on the bare host — it's the one hook both other CLIs defer to rather than reimplement, see [Sharing the roster](#sharing-the-roster-with-kilo-and-copilot).
 
 Alongside Number One the roster carries `chief-engineer` (fresh-project provisioning and dev-environment sign-off), `security-officer` (independent read-only review), `implementation-engineer` (scoped implementation through to a CI-green PR), and `duty-officer` (cheap read-only status checks). `claude/skills/` holds procedural knowledge that loads on demand instead of being retyped into every brief — verification discipline, PR/branch hygiene, the dotfiles commit protocol, the security-review checklist, and the config-scoping convention below.
 
 Number One can also grow the roster itself: when it identifies a recurring role (e.g. a "graphic-designer" or "devops-engineer" specialist), it's free to author a new subagent definition under `~/.claude/agents/`, or a new skill under `~/.claude/skills/`. Since those directories are symlinked straight into this repo's `claude/`, new files it creates show up here under version control automatically — expect them to appear as untracked files from time to time, and review them like any other change before committing. It won't commit or push on your behalf.
+
+### Sharing the roster with Kilo and Copilot
+
+Three CLIs run side by side on this machine — Claude Code, Kilo Code, and the
+GitHub Copilot CLI — and the goal is that a session behaves the same way
+whichever one is driving. What actually crosses the tool boundary today:
+
+| | Claude Code | Kilo Code | GitHub Copilot CLI |
+|---|---|---|---|
+| Global instructions | `claude/CLAUDE.md` | the same file, symlinked as `~/.config/kilo/AGENTS.md` | the same file, symlinked as `~/.copilot/copilot-instructions.md` |
+| Devcontainer guard | `claude/hooks/require-devcontainer.sh` | `kilo/plugin/require-devcontainer.ts` (shim) | `copilot/hooks/require-devcontainer.sh` (shim) |
+| Skills | `claude/skills/` | none | the same directory, symlinked to `~/.copilot/skills` |
+| Subagents | all five | one (`number-one`) | all five, hand-translated |
+| Never-merge enforcement | `block-pr-merge.sh` + a `permissions.deny` rule | `kilo.jsonc`'s `permission` deny rules | prose in the agent definition only |
+| No AI-attribution trailers | `block-ai-attribution.sh` | prose only | `"includeCoAuthoredBy": false` in `copilot/settings.json` (the CLI defaults this **on**) |
+
+Both ports of the devcontainer guard are deliberately **shims**: each translates
+its own tool's hook payload into the shape `claude/hooks/require-devcontainer.sh`
+already expects on stdin, then defers to that script's exit code for every
+decision. Neither holds any git/marker/container-detection logic of its own, and
+neither should ever grow any — two copies of a guard drift, and a drift here
+means either spurious blocks or, far worse, a silent bypass of the one rule
+keeping agent work off the bare host.
+
+The gaps, none of them papered over:
+
+- **Neither port has the `chief-engineer` exemption, and under Copilot that
+  agent is therefore blocked.** Both shims hardcode an `agent_type` the guard
+  never treats as exempt, because neither tool's hook payload carries an agent
+  identity to key an exemption off — Copilot's is `sessionId`, `timestamp`,
+  `cwd`, `toolName`, `toolArgs` and nothing more. The practical consequence is
+  sharp: `copilot/agents/chief-engineer.agent.md` ships, but its `git init`
+  would succeed and every following `git add`/`git commit`/`docker build` would
+  be denied, leaving a half-initialized repo. So that file and
+  `copilot/agents/number-one.agent.md` both carry a prominent warning to run
+  provisioning under Claude Code instead — verified by invoking it, which
+  refuses and touches nothing. Its read-only sign-off review mode still works.
+  Whether Copilot ever gets a real provisioning path is a decision for you, not
+  a default a shim should assume.
+- **`number-one`'s "NEVER MERGE" rule is only mechanically enforced under Claude
+  Code and Kilo** — by the hook plus `permissions.deny` in the first case, and
+  `kilo.jsonc`'s `permission` block in the second. Under Copilot it is prose in
+  `copilot/agents/number-one.agent.md` and
+  `copilot/agents/implementation-engineer.agent.md` and nothing else:
+  `block-pr-merge.sh` was not ported, and `require-devcontainer.sh` never
+  inspects merge commands. Both files say so outright rather than claiming a
+  backstop that isn't there — a rule that believes it is enforced when it isn't
+  is worse than one that knows it isn't.
+- **AI-attribution is the one prose rule that did get a mechanical backstop
+  under Copilot, and it needed one urgently.** `block-ai-attribution.sh` was not
+  ported — but leaving it at that would have been worse than nothing, because
+  the Copilot CLI **defaults to instructing the agent to add a
+  `Co-authored-by:` trailer to every commit**. Its own settings registry
+  describes `includeCoAuthoredBy` as "Add a Co-authored-by trailer to commits",
+  and `app.js` wires it as `coauthorEnabled: T.includeCoAuthoredBy !== false` —
+  so omitting the key opts *in*, directly against `claude/CLAUDE.md`'s rule.
+  `copilot/settings.json` therefore sets `"includeCoAuthoredBy": false`.
+  Verified: the key is on the CLI's canonical top-level settings list in the
+  shipped runtime, and `copilot version` accepts the file without the "Ignoring
+  unknown top-level key(s)" warning it emits for a made-up key.
+- **`~/.copilot/settings.json` does not stay a symlink.** Copilot writes
+  settings atomically (temp file plus rename), so saving them **replaces the
+  symlink with a regular file** rather than writing through it. Ordinary actions
+  trigger it — `copilot skill add`, `copilot plugin install`, `/memory on|off`,
+  `/settings ...` — and it was reproduced here with `copilot skill add`. Nothing
+  leaks into this repo (the CLI writes its own file, not ours), and the hook
+  block survives the rewrite and keeps firing; what is lost is that
+  `copilot/settings.json` **stops being the source of truth**, so later edits to
+  the matcher, the timeout or the hook path sit there doing nothing. Every `//`
+  comment is stripped and the hook schema is normalized too. Detect it with
+  `ls -l ~/.copilot/settings.json` — it should be a symlink into
+  `~/code/dotfiles/copilot/`. Repair it by re-running `install.py`, which now
+  checks for exactly this on every run, warns loudly, and names any top-level
+  key the CLI added before the re-link moves the detached file to
+  `settings.json.bak`.
+- **A `settings.json` the CLI can't parse disables the hook silently.** Observed:
+  one syntax error injected into `~/.copilot/settings.json` and the CLI printed
+  no warning and no error, the hook never ran, and a write landed in a guarded
+  repo. An *unknown key* does warn, and trailing commas are tolerated; it is
+  specifically the parse failure that says nothing. Since `copilot/settings.json`
+  is hand-maintained JSONC with ~80 comment lines, that is a live risk on every
+  edit — so `install.py` now strips the comments and parses that file on **every
+  run**, failing loudly if it doesn't parse. Re-run `install.py` after editing
+  it rather than assuming the guard survived.
+- **Copilot's agent schema is lossier than Claude's.** There is no equivalent of
+  `color` or `permissionMode`, and the `skill` and `sql` tools appear to be
+  granted no matter what an agent's `tools:` list says — so that list reads as a
+  floor, not a ceiling.
+- **A Copilot `preToolUse` hook that times out fails open — the tool call is
+  allowed through — and nothing can switch that off.** This is confirmed fact,
+  not inference. The shipped v1.0.80 runtime
+  (`node_modules/@github/copilot-linux-x64/prebuilds/linux-x64/runtime.node`)
+  carries the message template `timed out; allowing the tool call to proceed:`
+  in its string table, immediately beside `Denied by preToolUse hook:` and the
+  errored-hook wording `(fail-closed):`. A hook that *errors* fails closed; a
+  hook that *times out* does not. There is no settings key for it. (The strings
+  are prefix-compressed in that table, so a whole-sentence `grep -F` finds
+  nothing — grep the fragment.)
+
+  It matters because the guard runs once per path in a multi-file `apply_patch`,
+  so padding a patch with harmless paths is a way anyone can reach that
+  fail-open, by accident as easily as on purpose. Measured before the fix:
+  2000 paths took 19.7s, 3000 took 26.0s, and at 4000 paths (~260 KB, well
+  inside one model response) the hook blew the 30s `timeoutSec` and the write
+  would have landed — every path in the patch, guarded ones included.
+
+  The shim now bounds itself on three axes, each a **deny** on exceed: raw
+  payload size (4 MiB, counted in real **bytes** — the shim exports `LC_ALL=C`
+  precisely so `${#input}` is a byte count and not a character count, which used
+  to let a multibyte payload carry 4× the declared ceiling), a ceiling of 200
+  target paths checked before any per-path work happens, and a 20s wall-clock
+  budget with each individual guard spawn wrapped in `timeout` so one blocked
+  path (a dead `/mnt` mount will do it) can't run the clock out. The 4000-path
+  patch now denies in 0.06s, and the 15.6 MB multibyte payload that the
+  character-counting ceiling allowed through in 16.8s now denies in 0.7s.
+
+  **Be precise about the margin, because it is smaller than it looks.** Measured
+  on this machine after those fixes, the worst case observed is **~20.4s**, and
+  the **ceiling the code actually permits is just under 21s** — in both
+  directions, allow and deny — against a 30s `timeoutSec`. That is a margin of
+  roughly **1.43×**: not the ~3× the first version of this section claimed, and
+  not the ~1.5× the second one did. Cite the 21s ceiling rather than the
+  measurement; the measurement is only a lower bound on it, and a slower box
+  moves it.
+
+  Both worst cases are set by the 20s guard budget rather than by the payload
+  ceiling, and the extra second past 20 is arithmetic rather than slop. The budget
+  is checked at the *top* of each guard iteration, so a payload that keeps every
+  spawn slow-but-finite (200 paths each with ~18 nonexistent directory segments,
+  which the guard walks one `dirname` spawn at a time — about 15 KB of patch text)
+  rides the loop right up to it; and each spawn's own deadline is computed from
+  bash's `SECONDS`, which counts *whole* seconds, so a spawn starting at 19.99s
+  elapsed is handed a full extra second and is killed at ~21.0s. The ~1s of
+  payload parsing does **not** add on top of that — `SECONDS` is anchored before
+  the payload is read, so parsing is spent from inside the budget, and that was
+  checked rather than assumed (at an identical per-spawn delay the 4 MiB-padded
+  payload finished *faster* than the unpadded one). **All of which makes the
+  fail-open hard to reach, not unreachable** — a slower machine or a wedge
+  `timeout` can't interrupt could still cross 30s, and the honest description of
+  these bounds is that they raise the cost of reaching the hole rather than
+  closing it. Treat the 20s budget and the 30s `timeoutSec` as a matched pair;
+  change one, change all of them, and re-measure rather than trusting these
+  numbers. The full table lives in the shim's own header.
+- **Copilot's `preToolUse` matcher is `.*`, deliberately.** It was an exact-name
+  allowlist of tool names, which is a silent fail-open: any name not on the list
+  gets no hook, and the list can't be checked for completeness against a packed
+  binary. Matching everything moves the decision into the shim's own `case`
+  statement, which is testable code. MCP tool calls are still out of reach at
+  any width — they raise a separate `preMcpToolCall` event that no `preToolUse`
+  matcher sees.
+- **Kilo carries one of the five subagents and no skills wiring**, which is why
+  the row above says "one" and not "all five". That gap is untouched by the
+  Copilot work and still open.
 
 ### Global config vs. a project's own `.claude/`
 
@@ -488,21 +642,36 @@ dotfiles/
 │   │   ├── security-officer.md    ← independent read-only review
 │   │   ├── implementation-engineer.md
 │   │   └── duty-officer.md        ← cheap read-only status checks
-│   ├── skills/                ← procedural knowledge, loaded on demand
+│   ├── skills/                ← procedural knowledge, loaded on demand (also → ~/.copilot/skills)
 │   │   ├── claude-config-scoping/     ← global tier vs. a project's own .claude/
+│   │   ├── devcontainer-first/        ← the container rule the guard hook enforces
 │   │   ├── verification-discipline/
 │   │   ├── pr-branch-hygiene/
 │   │   ├── dotfiles-commit-protocol/
 │   │   └── security-review-checklist/
 │   └── hooks/
-│       ├── block-pr-merge.sh       ← PreToolUse guardrail: blocks gh pr merge / unsafe force-push
-│       └── block-ai-attribution.sh ← PreToolUse guardrail: blocks AI-attribution lines
+│       ├── block-pr-merge.sh        ← PreToolUse guardrail: blocks gh pr merge / unsafe force-push
+│       ├── block-ai-attribution.sh  ← PreToolUse guardrail: blocks AI-attribution lines
+│       └── require-devcontainer.sh  ← PreToolUse guardrail: keeps project work inside its devcontainer
 ├── kilo/
 │   ├── kilo.jsonc              ← symlinked → ~/.config/kilo/kilo.jsonc (permissions, providers)
 │   ├── tui.jsonc               ← symlinked → ~/.config/kilo/tui.jsonc (theme, notifications)
+│   ├── plugin/                 ← symlinked → ~/.config/kilo/plugin (must be a real symlink)
+│   │   └── require-devcontainer.ts  ← shim: defers to claude/hooks/require-devcontainer.sh
 │   └── .kilo/
 │       └── agents/
 │           └── number-one.md   ← orchestrator subagent (Kilo frontmatter format)
+├── copilot/
+│   ├── settings.json           ← symlinked → ~/.copilot/settings.json (preToolUse wiring + no-coauthor; NOT config.json;
+│   │                              the CLI detaches this symlink when it saves settings — re-run install.py)
+│   ├── hooks/                  ← symlinked → ~/.copilot/hooks (load-bearing: settings.json calls into it)
+│   │   └── require-devcontainer.sh  ← shim: defers to claude/hooks/require-devcontainer.sh
+│   └── agents/                 ← symlinked → ~/.copilot/agents (Copilot's *.agent.md schema)
+│       ├── number-one.agent.md
+│       ├── chief-engineer.agent.md
+│       ├── security-officer.agent.md
+│       ├── implementation-engineer.agent.md
+│       └── duty-officer.agent.md
 ├── starship/
 │   └── starship.toml
 ├── tmux/

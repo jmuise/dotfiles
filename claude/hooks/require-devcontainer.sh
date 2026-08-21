@@ -25,7 +25,26 @@
 # a quoted pipe or semicolon inside an argument (`grep 'a|b' f`) splits into
 # segments and trips the allowlist; command substitution is refused outright
 # even when its inner command would be allowed; `cd x && ls` is refused because
-# `cd` is not on the list.
+# `cd` is not on the list; a backslash line-continuation (`git log --oneline \`
+# + newline + `-n 10`) is refused, because every newline is treated as a command
+# separator and `-n` is not a command name; and a `#` comment inside a
+# multi-line command splits at that newline the same way, so whatever follows it
+# is judged as its own segment and will usually trip the allowlist.
+#
+# Those last two are deliberate, and were reached by reverting an attempt to do
+# better. A ten-line splice that rejoined backslash-continued lines before
+# segmenting looked like a free convenience and was not. Bash ends a `#` comment
+# at the newline *regardless* of a trailing backslash, so `ls -la #\` + newline
+# + `bash evil.sh` spliced into one segment headed by an allowlisted `ls` and
+# ran arbitrary code against a guarded working tree. The splice was also
+# quadratic in line count -- ~176s on 32k lines, past Claude Code's 60s default
+# hook timeout, and a timed-out hook does not exit 2, so the tool call proceeds.
+# An ACE bypass and a fail-open, bought for the convenience of not retyping a
+# command on one line. Modelling shell quoting and comments does not belong in a
+# security guard; when a continuation is refused, join the lines. The over-block
+# only bites on the bare host in a non-exempt repo anyway -- inside a container
+# this script has already exited 0 -- so it lands exactly where work should not
+# be happening. DO NOT reintroduce a splice, comment-aware or otherwise.
 #
 # The same bias governs failure of the script itself. PreToolUse treats *only*
 # exit 2 as a block; every other non-zero exit is a non-blocking error and the
@@ -110,30 +129,43 @@ fi
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -n "$command" ] || exit 0
 
-# Fold newlines to spaces before matching, exactly as block-pr-merge.sh does and
-# for the same reason: grep is line-oriented, so a real newline in a
-# backslash-continued or multi-line command silently truncates what gets
-# inspected. Pure parameter expansion, so no external process can fail under
-# `set -e` and fail this guard open.
-command=${command//$'\n'/ }
+# Fold newlines to spaces for the two text passes below, exactly as
+# block-pr-merge.sh does and for the same reason: grep is line-oriented, so a real
+# newline in a multi-line command silently truncates what gets inspected -- a
+# `$(` opened on line 2 would go unseen if the substitution grep only ever saw
+# line 1. This folded copy is for those two passes ONLY. Segmentation below must
+# see the newlines -- see the note there. Pure parameter expansion, so no
+# external process can fail under `set -e` and fail this guard open, and it is
+# linear in the size of the command.
+folded=${command//$'\n'/ }
 
 # Command substitution can smuggle an arbitrary command inside an allowlisted
 # one (`echo $(npm ci)`), and this hook cannot evaluate what is inside it.
-if printf '%s' "$command" | grep -qE '\$\(|`|<\('; then
+if printf '%s' "$folded" | grep -qE '\$\(|`|<\('; then
   block "command substitution cannot be inspected, so it is refused on the host"
 fi
 
 # Output redirection writes files, which is the thing being prevented. Strip the
 # harmless /dev/null and fd-dup idioms first so ordinary read-only invocations
 # (`find . 2>/dev/null`) aren't caught.
-redir_check=$(printf '%s' "$command" | sed -E 's/2>&1//g; s/[0-9]?>>?[[:space:]]*\/dev\/null//g')
+redir_check=$(printf '%s' "$folded" | sed -E 's/2>&1//g; s/[0-9]?>>?[[:space:]]*\/dev\/null//g')
 if printf '%s' "$redir_check" | grep -q '>'; then
   block "output redirection writes files on the host"
 fi
 
 # Judge every segment of a chained command, not just the first: an allowlisted
 # command followed by `&& npm ci` must not pass on the strength of its head.
-segments=$(printf '%s' "$command" | tr ';&|' '\n\n\n')
+#
+# A NEWLINE IS A COMMAND SEPARATOR AND MUST BE IN THIS SET. This once ran on the
+# folded string, and because the fold happened first `tr` never saw a newline at
+# all: `$'ls\nrm -rf /'` collapsed to `ls rm -rf /`, a single segment headed by an
+# allowlisted `ls`, and every line after the first was waved through as an
+# ARGUMENT to it. That was arbitrary command execution against a guarded working
+# tree -- the exact failure this file exists to prevent. Segment the
+# newline-bearing string, never the folded one, and never a rejoined
+# derivative of it -- see the header on why the line-continuation splice that
+# once sat here was removed rather than repaired.
+segments=$(printf '%s' "$command" | tr ';&|\n' '\n\n\n\n')
 
 while IFS= read -r segment; do
   # shellcheck disable=SC2206 # deliberate word splitting: shell tokens
