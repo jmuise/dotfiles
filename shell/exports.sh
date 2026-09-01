@@ -88,7 +88,7 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]] \
    && [[ -f "$XDG_CACHE_HOME/dotfiles/openrouter-token.configured" ]] \
    && command -v git &>/dev/null; then
   _openrouter_key=$(printf 'protocol=https\nhost=dotfiles-openrouter.local\nusername=openrouter\n' \
-    | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+    | git -c credential.interactive=never credential fill 2>/dev/null | sed -n 's/^password=//p')
   if [[ -n "$_openrouter_key" ]]; then
     export OPENROUTER_API_KEY="$_openrouter_key"
     export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
@@ -103,7 +103,7 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]] \
    && [[ -f "$XDG_CACHE_HOME/dotfiles/claude-token.configured" ]] \
    && command -v git &>/dev/null; then
   _claude_token=$(printf 'protocol=https\nhost=dotfiles-secrets.local\nusername=claude-code\n' \
-    | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+    | git -c credential.interactive=never credential fill 2>/dev/null | sed -n 's/^password=//p')
   [[ -n "$_claude_token" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$_claude_token"
   unset _claude_token
 fi
@@ -123,7 +123,7 @@ if [[ -z "${GH_TOKEN:-}" ]] && command -v gh &>/dev/null; then
      && [[ -f "$XDG_CACHE_HOME/dotfiles/gh-token.configured" ]] \
      && command -v git &>/dev/null; then
     _gh_token=$(printf 'protocol=https\nhost=dotfiles-gh.local\nusername=gh-cli\n' \
-      | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+      | git -c credential.interactive=never credential fill 2>/dev/null | sed -n 's/^password=//p')
   fi
   [[ -n "$_gh_token" ]] && export GH_TOKEN="$_gh_token"
   unset _gh_token
