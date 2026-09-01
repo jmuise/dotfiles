@@ -207,7 +207,19 @@ MARKER = "# Managed by dotfiles install.py — do not edit directly.\n"
 gitconfig_marker  = MARKER + "# Edit git/.gitconfig.template or ~/.gitconfig.local, then re-run install.py.\n\n"
 gitconfig_local_content = gitconfig_local.read_text(encoding="utf-8") if gitconfig_local.exists() else ""
 gitconfig_template      = (DOTFILES / "git" / ".gitconfig.template").read_text(encoding="utf-8")
-gitconfig_rendered = gitconfig_marker + gitconfig_template + "\n" + gitconfig_local_content
+gitconfig_rendered = gitconfig_marker + gitconfig_template
+if is_windows:
+    # tools/smart-editor.sh is a POSIX shell script with no native-Windows
+    # counterpart (and per README.md, a .cmd shim can't safely wrap it -
+    # cmd.exe re-scans a batch file's %* with no working escape, which is
+    # exactly the injection class that got windows/claude.cmd removed).
+    # powershell/profile.ps1 already keeps native Windows on a hardcoded
+    # `code --wait` for $env:EDITOR for the same reason; match that here so
+    # core.editor doesn't diverge onto a script this platform can't run.
+    # Inserted between the template and ~/.gitconfig.local (not after) so a
+    # user's own override there still wins, same as everywhere else.
+    gitconfig_rendered += "\n[core]\n\teditor = code --wait\n"
+gitconfig_rendered += "\n" + gitconfig_local_content
 render(gitconfig_rendered, HOME / ".gitconfig", gitconfig_marker)
 
 effective_name  = run("git", "config", "--file", str(HOME / ".gitconfig"), "--get", "user.name").stdout.strip()

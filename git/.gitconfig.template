@@ -1,6 +1,6 @@
 [core]
 	excludesfile = ~/.gitignore_global
-	editor       = code --wait
+	editor       = smart-editor
 	autocrlf     = input
 	pager        = delta
 
