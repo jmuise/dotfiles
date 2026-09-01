@@ -62,6 +62,43 @@ if [[ $status -ne 0 || "$outcome" != "success" ]]; then
   exit 1
 fi
 
+# VS Code's own Dev Containers extension clones dotfiles.repository into the
+# container and runs dotfiles.installCommand on attach; the devcontainer CLI
+# has no equivalent, so replicate it here from the same settings this repo
+# ships to VS Code, for parity between `sp`, `sp -c`, and a native VS Code
+# attach. install.sh is self-updating and safe to re-run, so this runs on
+# every `sp`, not just first creation.
+setup_dotfiles() {
+  local self settings repo target_path install_cmd
+  self="$(readlink -f "${BASH_SOURCE[0]}")"
+  settings="$(dirname "$self")/../vscode/settings.json"
+  [[ -f "$settings" ]] || return 0
+
+  # Anchored to (optional whitespace +) the key at line start, so a
+  # commented-out (`// "dotfiles.repository": ...`) or otherwise indented
+  # example line elsewhere in this JSONC file can't be picked up instead.
+  repo="$(sed -n 's/^[[:space:]]*"dotfiles\.repository"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$settings" | head -n1)"
+  target_path="$(sed -n 's/^[[:space:]]*"dotfiles\.targetPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$settings" | head -n1)"
+  install_cmd="$(sed -n 's/^[[:space:]]*"dotfiles\.installCommand"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$settings" | head -n1)"
+  [[ -n "$repo" ]] || return 0
+  target_path="${target_path:-~/dotfiles}"
+  install_cmd="${install_cmd:-install.sh}"
+
+  echo "sp: setting up dotfiles in container ($repo)..." >&2
+  # target_path/repo/install_cmd come from this repo's own settings.json, but
+  # are passed as argv (not interpolated into the remote script's text) so a
+  # stray quote/`$(...)`/`;` in any of them can't inject into the remote
+  # shell — no string-building, no eval.
+  devcontainer exec --workspace-folder "$dir" bash -c '
+    set -e
+    target="${1/#\~/$HOME}"
+    [[ -d "$target/.git" ]] || git clone -- "$2" "$target"
+    [[ -f "$target/$3" ]] && bash "$target/$3"
+  ' _ "$target_path" "$repo" "$install_cmd" \
+    || echo "sp: dotfiles setup failed (continuing)" >&2
+}
+setup_dotfiles
+
 if $use_code; then
   if ! command -v code >/dev/null 2>&1; then
     echo "sp: container is up, but the 'code' CLI isn't on PATH — can't attach VS Code." >&2
