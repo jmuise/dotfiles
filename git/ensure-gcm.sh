@@ -43,6 +43,15 @@ wire_up() {
   local bin_path="$1"
   touch "$LOCAL"
   git config --file "$LOCAL" credential.helper "$bin_path"
+  # GCM's first invocation picks an interactive credential-store backend
+  # (secretservice/keychain/plaintext/cache) via a terminal wizard if none is
+  # configured yet - confirmed live, this hangs headless `git credential fill`
+  # calls waiting on /dev/tty even with credential.interactive=never (that
+  # flag only suppresses username/password prompts, not GCM's own store-
+  # selection setup). Pin a store explicitly so that wizard never runs.
+  # `cache` needs no keyring/D-Bus and is sufficient for this repo's
+  # synthetic-host token lookups (see secrets/README.md).
+  git config --file "$LOCAL" credential.credentialStore cache
   chmod 600 "$LOCAL"
 }
 
