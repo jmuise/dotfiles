@@ -40,6 +40,9 @@ alias gstash='git stash push -m'
 alias gpop='git stash pop'
 
 # ── devcontainers / docker ────────────────────────────────────────────────────
+# sp: build/start a project's devcontainer and drop into it — the terminal
+# equivalent of VS Code's "Reopen in Container". See tools/start-project.sh.
+alias sp='start-project'
 alias dc='docker compose'
 alias dcu='docker compose up -d'
 alias dcd='docker compose down'

@@ -35,6 +35,10 @@ KILO_CLI_VERSION = "7.4.22"
 # @github/copilot install call sites below, and mentioned in README.md).
 COPILOT_CLI_VERSION = "1.0.80"
 
+# Same rationale as KILO_CLI_VERSION above. Bump by checking
+# `npm view @devcontainers/cli version` and updating this constant.
+DEVCONTAINERS_CLI_VERSION = "0.89.0"
+
 # ── args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--dry-run", action="store_true")
@@ -416,6 +420,29 @@ if not is_windows and not shutil.which("copilot"):
         else:
             warn(f"npm not found — skipping copilot install. Run: npm install -g @github/copilot@{COPILOT_CLI_VERSION}")
 
+# ── devcontainer CLI ─────────────────────────────────────────────────────────
+# Same npm-global pattern as Kilo/Copilot above. Backs tools/start-project.sh
+# (the `sp` alias), which builds/starts a project's devcontainer from the
+# terminal the way VS Code's "Reopen in Container" does from its UI.
+log("devcontainer CLI...")
+if not is_windows and not shutil.which("devcontainer"):
+    if DRY_RUN:
+        print(f"  would install devcontainer CLI via: npm install -g @devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}")
+    else:
+        _npm = shutil.which("npm")
+        if _npm:
+            log("Installing devcontainer CLI...")
+            _r = subprocess.run([_npm, "install", "-g", f"@devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}"],
+                                capture_output=True, text=True, timeout=120)
+            if _r.returncode == 0:
+                success("devcontainer CLI installed")
+            else:
+                warn(f"devcontainer CLI install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
+        else:
+            warn(f"npm not found — skipping devcontainer CLI install. Run: npm install -g @devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}")
+
+log("start-project (sp)...")
+link(DOTFILES / "tools" / "start-project.sh", HOME / ".local" / "bin" / "start-project")
 
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")

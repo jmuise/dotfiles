@@ -111,6 +111,8 @@ git-credential forwarding, since the latter is only confirmed to work for
 real git hosts, not the synthetic host `secrets/` uses for the Claude Code
 token (see [secrets/README.md](secrets/README.md)).
 
+**`sp [path]`** is the terminal equivalent of clicking "Reopen in Container" in VS Code: it builds/starts the project's devcontainer via the `devcontainer` CLI and drops you into a shell inside it. Pass `-c`/`--code` to attach VS Code to the container instead of opening a shell. Backed by `tools/start-project.sh`; the `devcontainer` CLI itself is installed by `install.py` (pinned as `DEVCONTAINERS_CLI_VERSION`, same npm-global pattern as Kilo/Copilot).
+
 ## Claude Code
 
 `claude/agents/number-one.md` is a global orchestrator subagent ("Number One") — decompose an order into tracked tasks, delegate implementation to worker subagents, keep their PRs pushed and current, and hand off to you for review. It never merges: `claude/hooks/block-pr-merge.sh` (wired up via `claude/settings.json`'s `PreToolUse` hook, plus a `permissions.deny` rule) hard-blocks `gh pr merge` and unsafe `git push --force` for every agent, including any subagent it spawns. `claude/hooks/block-ai-attribution.sh` is wired the same way and blocks AI-attribution lines from reaching git history or any repo artifact.
