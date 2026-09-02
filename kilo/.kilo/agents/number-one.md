@@ -12,7 +12,7 @@ tools:
   Read: true
   Grep: true
   Glob: true
-color: red
+color: error
 ---
 
 # Number One

@@ -560,7 +560,31 @@ kilo_config_dir = HOME / ".config" / "kilo"
 link(DOTFILES / "claude" / "CLAUDE.md",              kilo_config_dir / "AGENTS.md")
 link(DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jsonc")
 link(DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc")
-link(DOTFILES / "kilo" / ".kilo",                    kilo_config_dir / ".kilo")
+# Agents must land directly under ~/.config/kilo/agents, NOT nested inside a
+# linked ~/.config/kilo/.kilo/ directory: Kilo (an opencode fork) discovers
+# agents by globbing `{agent,agents}/**/*.md` *inside* each config directory
+# it already knows about, and ~/.config/kilo/ is that directory -- a file at
+# `.kilo/agents/number-one.md` relative to it has ".kilo" as its first path
+# segment, which the glob never matches. Confirmed empirically: linking the
+# whole .kilo/ directory (the old wiring) left `kilo agent list` never
+# mentioning number-one at all, no error, no warning.
+link(DOTFILES / "kilo" / ".kilo" / "agents",         kilo_config_dir / "agents")
+# `commands/` holds only a `.gitkeep` today (no real command files), so it is
+# deliberately NOT linked here yet -- Kilo's command glob also wants a
+# top-level `commands/` (confirmed: `{command,commands}/**/*.md`), so wire it
+# the same way as agents/ above once it actually holds content worth serving.
+#
+# The pre-fix wiring above also symlinked kilo/.kilo/ wholesale, which is why
+# ~/.config/kilo/.kilo may still exist as a leftover from before this fix;
+# clean up only that exact stale symlink, never anything else that might be
+# sitting at that path.
+_stale_dot_kilo_link = kilo_config_dir / ".kilo"
+if _stale_dot_kilo_link.is_symlink() and _stale_dot_kilo_link.readlink() == DOTFILES / "kilo" / ".kilo":
+    if DRY_RUN:
+        print(f"  remove stale link: {_stale_dot_kilo_link} -> {DOTFILES / 'kilo' / '.kilo'}")
+    else:
+        _stale_dot_kilo_link.unlink()
+        success(f"removed stale link {_stale_dot_kilo_link}")
 # Plugin directory must be a real symlink, not just a config-file reference:
 # kilo.jsonc's `plugin` array resolves relative paths against the *literal*
 # path of the config file (this symlink target's parent), not its realpath,
