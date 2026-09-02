@@ -116,7 +116,10 @@ in_container && exit 0
 
 block() {
   echo "BLOCKED by claude/hooks/require-devcontainer.sh: $1" >&2
-  echo "This session is not running inside the devcontainer for the project at $project_root, so it may not edit its files or run project commands against it. Load the \`devcontainer-first\` skill for what to do next -- in short: if the project has no .devcontainer/ yet, confirm with the Captain before retrofitting one, then dispatch chief-engineer for Phase 3 + Phase 4; if it has one and this session merely isn't in it, dispatch chief-engineer for Phase 4 alone. Never do the work on the host as a substitute. (Agent: \"$agent_type\")" >&2
+  # agent_type (parsed above, hardcoded as "kilo"/"copilot" by those shims) is
+  # available here if a future tool-specific message is ever wanted -- that
+  # would be a `case "$agent_type"` in this function, not an interface change.
+  echo "This session is not running inside the devcontainer for the project at $project_root, so it may not edit its files or run project commands against it. Getting containerized means relaunching the session inside the container; no worker can arrange that for itself mid-task, and host-side work is never the substitute. If the project has no .devcontainer/ yet, retrofitting one needs the Captain's confirmation first; if it has one and this session simply isn't in it, the session needs relaunching inside it. Route that through whatever provisioning path this CLI has -- and if it has none, stop and tell the Captain rather than working around it. The \`devcontainer-first\` skill holds the full decision tree. (Agent: \"$agent_type\")" >&2
   exit 2
 }
 
