@@ -142,6 +142,17 @@ no-ops if the bridge already set one up.
 `shell/exports.sh`'s lookup runs there too - but it needs both a working
 credential forward *and* the sentinel file for that lookup to actually fire.
 
+**`tools/start-project.sh` (`sp`) doesn't go through VS Code at all** - it
+drives the bare `@devcontainers/cli` (`devcontainer up`/`exec`) directly, so
+the proxy described below never gets set up and both tokens come up empty
+inside an `sp`-started container. `sp` works around this itself: if
+`CLAUDE_CODE_OAUTH_TOKEN`/`GH_TOKEN` (falling back to `gh auth token`) are
+already present in the host shell that ran `sp`, it forwards them straight
+into the container via `devcontainer ... --remote-env`, bypassing the GCM
+proxy entirely for this path. `sp -c` (VS Code attach) doesn't get this - it
+opens VS Code's own terminal instead of `sp`'s `exec`, so it's still on the
+VS Code forwarding path below.
+
 **VS Code's Dev Containers git-credential forwarding is the reliable path.**
 VS Code proxies `git credential fill`/`approve` from inside the container
 back to the host's real credential helper - confirmed live working not just

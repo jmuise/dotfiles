@@ -45,9 +45,32 @@ if [[ ! -e "$dir/.devcontainer/devcontainer.json" && ! -e "$dir/.devcontainer.js
   exit 1
 fi
 
+# Credential forwarding into the container (see secrets/README.md) relies on
+# VS Code's Dev Containers extension proxying `git credential fill`/`approve`
+# back to the host - a feature the bare devcontainer CLI this script drives
+# doesn't have. Without it, CLAUDE_CODE_OAUTH_TOKEN and GH_TOKEN both come up
+# empty inside an `sp`-started container. Fall back to forwarding them
+# directly as env vars when this host shell already has them, bypassing the
+# GCM-proxy dependency entirely for this path. (`--remote-env` puts the value
+# in this process's argv, briefly visible to `ps` on the host and to Docker -
+# the same trade-off VS Code's own forwarding makes, and unavoidable with the
+# devcontainer CLI's interface.)
+remote_env_args=()
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  remote_env_args+=(--remote-env "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN")
+fi
+_gh_token="${GH_TOKEN:-}"
+if [[ -z "$_gh_token" ]] && command -v gh &>/dev/null; then
+  _gh_token="$(gh auth token 2>/dev/null || true)"
+fi
+if [[ -n "$_gh_token" ]]; then
+  remote_env_args+=(--remote-env "GH_TOKEN=$_gh_token")
+fi
+unset _gh_token
+
 echo "sp: starting devcontainer for $dir..." >&2
 set +e
-result="$(devcontainer up --workspace-folder "$dir")"
+result="$(devcontainer up --workspace-folder "$dir" "${remote_env_args[@]}")"
 status=$?
 set -e
 
@@ -110,4 +133,4 @@ if $use_code; then
   exec code --folder-uri "vscode-remote://dev-container+${hex}${target}"
 fi
 
-exec devcontainer exec --workspace-folder "$dir" bash
+exec devcontainer exec --workspace-folder "$dir" "${remote_env_args[@]}" bash
