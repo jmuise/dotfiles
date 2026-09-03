@@ -71,15 +71,18 @@
 # misses gets no hook at all with nothing to notice. Widening the matcher moves the
 # whole classification decision into the `case` statement below -- testable code
 # under our control, where an unrecognised name is a visible miss rather than a
-# silent one. The cost is that this hook now runs on EVERY tool call, so the
-# out-of-scope fast path below is on the session's hot path and is deliberately
-# kept to a single jq spawn. `str_replace_editor` is mapped defensively: it was
-# never observed firing, but the shipped runtime does carry its tool schema, and
-# that schema names its target parameter `path` -- the same key `create`/`edit`
-# use, which the branch below already reads. MCP tools remain out of reach no
-# matter what the matcher says: they fire a separate `preMcpToolCall` event that a
-# preToolUse matcher never sees. That is out of scope here and deliberately not
-# worked around.
+# silent one. THAT LAST CLAIM WAS ASPIRATIONAL UNTIL ISSUE #12: the `case` used
+# to end `*) exit 0 ;;`, which made an unrecognised name a SILENT allow, not a
+# visible miss -- see the DENY BY DEFAULT note at the `case` itself for the fix
+# and the reproduced bypass. The cost is that this hook now runs on EVERY tool
+# call, so the out-of-scope fast path below is on the session's hot path and is
+# deliberately kept to a single jq spawn. `str_replace_editor` is mapped
+# defensively: it was never observed firing, but the shipped runtime does carry
+# its tool schema, and that schema names its target parameter `path` -- the
+# same key `create`/`edit` use, which the branch below already reads. MCP tools
+# remain out of reach no matter what the matcher says: they fire a separate
+# `preMcpToolCall` event that a preToolUse matcher never sees. That is out of
+# scope here and deliberately not worked around.
 #
 # THE INVALID-MATCHER HAZARD lives in copilot/settings.json, not here, but it is
 # the same failure class and worth stating once: matchers are compiled as
@@ -359,15 +362,68 @@ esac
 # require-devcontainer.sh only branches on "Bash" vs. everything else in
 # {Edit, Write, NotebookEdit}; it has no per-file-tool logic. So every Copilot
 # file-mutation tool collapses to "Edit" and takes the identical path through it.
-# Anything not listed is out of scope and allowed untouched -- read tools (view,
-# grep, glob), planning tools, and so on. Note there is no NotebookEdit equivalent
-# to map: .ipynb files go through create/edit like any other text file. `write` is
-# deliberately absent -- it is a Copilot *permission kind*, not a tool name.
+# Note there is no NotebookEdit equivalent to map: .ipynb files go through
+# create/edit like any other text file. `write` is deliberately absent -- it is a
+# Copilot *permission kind*, not a tool name.
+#
+# DENY BY DEFAULT -- issue #12. This case used to end `*) exit 0 ;;`: any
+# toolName this shim did not recognize was silently ALLOWED. That is a fail-open
+# on the exact same axis as the timeout/matcher hazards documented above, except
+# it needs no adverse condition to trigger -- it fires on the FIRST call bearing
+# a name this file has not been taught, whether that is a future Copilot CLI
+# tool, a typo, or a name chosen specifically to dodge the `case` above. Driven
+# directly against a guarded, non-containerized repo, feeding this shim
+# `powershell`, `local_shell`, `shell`, and `run_in_terminal` -- none of them
+# real Copilot tool names, all of them plausible ones -- each ran `npm ci` with
+# ALLOW, while `bash` (lowercase, the one name this file did recognize) correctly
+# denied. Confirmed reproducing before this fix and confirmed denying after it.
+#
+# The fix inverts the default: only names this shim can positively account for
+# get out of the `case` without a deny. `view`, `grep`, and `glob` are Copilot's
+# read tools -- confirmed present as literal tool-name tokens in v1.0.80's
+# node_modules/@github/copilot-linux-x64/prebuilds/linux-x64/runtime.node string
+# table (that table is prefix-compressed, per the TIMEOUT FAILS OPEN note above,
+# so this checks for the token rather than the quoted JSON string) -- and none of
+# the three take a `command` or a path: `view` reads a file, `grep`/`glob` search
+# without writing. Nothing else is allowlisted, INCLUDING Copilot "planning"
+# tools this shim cannot name today: an unnamed tool is exactly what this fix
+# refuses to wave through on the strength of not looking dangerous.
+#
+# NO SHAPE-PROBE TIEBREAKER HERE, UNLIKE THE KILO PORT -- AND THAT ASYMMETRY IS
+# THIS PORT'S ADVANTAGE, NOT A FEATURE IT LACKS. An earlier version of this note
+# framed Kilo's probe as something that "earns its keep". State the trade
+# accurately instead: an unconditional deny on an unrecognized name is the
+# stronger design, and Kilo's probe is a CONCESSION to a tool namespace that
+# cannot be enumerated, carrying known residual risk. An adversarial review of
+# the Kilo port landed BOTH of its blocking findings squarely on that probe --
+# a read-only allowlist that a contributed tool could claim membership of by
+# name, and a "route path-bearing calls through Edit" rule justified by a claim
+# about the shared guard script that turned out to be false. Neither defect has
+# an analogue here, because there is no probe here for them to live in.
+#
+# Copilot can afford the stricter design because its tool roster is closed and
+# first-party (no user-installed tools reach this hook), and its MCP tools fire
+# a *separate* preMcpToolCall event this matcher never sees at all (see THE
+# MODEL-FAMILY TOOL-NAME TRAP above) -- so there is no MCP name that could ever
+# reach this `case` to be probed. Every legitimate name this shim will ever see
+# is a Copilot built-in, which means every legitimate name can and should be
+# added here explicitly rather than guessed at by shape. Kilo cannot afford it:
+# MCP servers and plugins contribute names Kilo itself cannot enumerate ahead of
+# time, so denying every unenumerated name there would deny the legitimate ones
+# too, and the probe is what buys those calls a judgement at all.
+#
+# DO NOT "harmonize" the two ports by importing a shape probe here. That would
+# trade this port's one structural advantage for parity with the weaker design,
+# and it would import the residual risk documented in kilo/plugin/
+# require-devcontainer.ts along with it. If Copilot ships a new tool, the
+# fail-safe outcome is a loud, actionable deny -- not a silent allow -- and it
+# stays that way until someone adds the name below.
 case "$tool_name" in
 bash) mapped="Bash" ;;
 create | edit | apply_patch | str_replace_editor) mapped="Edit" ;;
+view | grep | glob) exit 0 ;;
 "") deny "BLOCKED by $SHIM_NAME: the hook payload carried no toolName, so this call could not be classified. Refusing rather than allowing it unguarded." ;;
-*) exit 0 ;;
+*) deny "BLOCKED by $SHIM_NAME: the hook payload's toolName ('$tool_name') is not one this shim recognizes as either a read-only tool or a shell/file-mutation tool. Refusing rather than allowing an unclassified tool call through unguarded, which is the fail-open issue #12 closed -- do not restore a wildcard allow here. If '$tool_name' is a genuine read-only Copilot tool, add it to the read-only case above; if it runs commands or writes files, add it to the Bash/Edit case above." ;;
 esac
 
 # The session's working directory. require-devcontainer.sh judges a Bash call
