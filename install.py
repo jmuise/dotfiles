@@ -233,16 +233,22 @@ elif not is_devcontainer() and not is_windows:
     # devcontainers can pull it via `git credential fill dotfiles-identity.local`.
     # Skipped on Windows — GCM handles devcontainer credential forwarding natively
     # and shows interactive dialogs for unrecognised hosts regardless of env flags.
-    git_credential_approve("https", IDENTITY_HOST, effective_name, effective_email)
+    if DRY_RUN:
+        print(f"  would write git identity to credential store: host={IDENTITY_HOST} username={effective_name}")
+    else:
+        git_credential_approve("https", IDENTITY_HOST, effective_name, effective_email)
 
 if not is_devcontainer() and not is_windows and shutil.which("gh"):
-    gh_token = run("gh", "auth", "token", timeout=10).stdout.strip()
-    if gh_token:
-        git_credential_approve("https", GH_HOST, "gh-cli", gh_token)
-        readback = git_credential_fill("https", GH_HOST, "gh-cli").get("password", "")
-        if readback != gh_token:
-            warn("gh token approve reported success but reading it back didn't match — likely not persisted. "
-                 "Run 'git config --get credential.helper' to check. See secrets/README.md.")
+    if DRY_RUN:
+        print(f"  would write gh OAuth token to credential store: host={GH_HOST} username=gh-cli (skipping 'gh auth token')")
+    else:
+        gh_token = run("gh", "auth", "token", timeout=10).stdout.strip()
+        if gh_token:
+            git_credential_approve("https", GH_HOST, "gh-cli", gh_token)
+            readback = git_credential_fill("https", GH_HOST, "gh-cli").get("password", "")
+            if readback != gh_token:
+                warn("gh token approve reported success but reading it back didn't match — likely not persisted. "
+                     "Run 'git config --get credential.helper' to check. See secrets/README.md.")
 
 # ── git hooks ─────────────────────────────────────────────────────────────────
 log("Git hooks...")
@@ -281,23 +287,48 @@ if DRY_RUN:
     print(f"  would record install root: {DOTFILES}")
 else:
     receipt = HOME / ".local" / "state" / "dotfiles" / "install-root"
-    receipt.parent.mkdir(parents=True, exist_ok=True)
     # Refuse to write through a symlink. write_text() opens with plain
     # open(..., "w"), which follows symlinks and truncates whatever they
-    # point at -- a symlink planted at the receipt path (or its immediate
-    # parent dir) before this runs would turn a routine install into an
-    # attacker-chosen arbitrary-file overwrite. Same awareness as
-    # write_through_symlink() above, applied in the opposite direction: that
-    # helper deliberately follows a symlink because a user's own dotfile
-    # symlinks are meant to be written through; this receipt has no
-    # legitimate reason to ever be a symlink, so we refuse instead.
-    if receipt.parent.is_symlink():
-        error(f"{receipt.parent} is a symlink — refusing to write install receipt through it")
-        sys.exit(1)
-    if receipt.is_symlink():
-        receipt.unlink()
-    receipt.write_text(f"{DOTFILES}\n", encoding="utf-8")
-    success(f"Recorded install root ({DOTFILES}) -> {receipt}")
+    # point at -- a symlink planted at the receipt path, at its immediate
+    # parent dir, or at ANY ancestor dir up to $HOME before this runs would
+    # turn a routine install into an attacker-chosen arbitrary-file
+    # overwrite. A symlinked ancestor is just as dangerous as a symlinked
+    # parent: receipt.parent.mkdir(parents=True) would happily create the
+    # rest of the tree *inside* the redirected location and the write would
+    # then land there undetected, so the check has to walk every component
+    # from receipt.parent up to (and including) HOME, and must run before
+    # the mkdir. Same awareness as write_through_symlink() above, applied in
+    # the opposite direction: that helper deliberately follows a symlink
+    # because a user's own dotfile symlinks are meant to be written through;
+    # this receipt has no legitimate reason to ever sit under one, so we
+    # refuse instead.
+    #
+    # A symlink anywhere on that path is a warn-and-skip, NOT an abort. The
+    # receipt only arms the git-hook auto-sync convenience (see
+    # hooks/_dispatch.sh); it is not load-bearing for the rest of this
+    # install -- shell, editors, CLIs, SSH, VS Code and global config all
+    # come afterward and must still run. Skipping the write leaves the guard
+    # disarmed, which is the safe direction, but the user has to be told.
+    symlinked_component = None
+    for _component in receipt.parents:
+        if _component.is_symlink():
+            symlinked_component = _component
+            break
+        if _component == HOME:
+            break
+    if symlinked_component is not None:
+        warn(f"{symlinked_component} is a symlink — NOT writing the install receipt "
+             f"through it (an ancestor symlink would redirect the write outside "
+             f"~/.local/state). The git-hook auto-sync guard stays DISARMED: "
+             f"hooks/_dispatch.sh will skip every hook-triggered install of this "
+             f"checkout until you remove the symlinked component and re-run "
+             f"'bash install.sh' by hand. The rest of this install continues.")
+    else:
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        if receipt.is_symlink():
+            receipt.unlink()
+        receipt.write_text(f"{DOTFILES}\n", encoding="utf-8")
+        success(f"Recorded install root ({DOTFILES}) -> {receipt}")
 
 # ── shell ─────────────────────────────────────────────────────────────────────
 # Only these files are sourced into a running shell's environment at startup, so
