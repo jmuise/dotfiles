@@ -560,7 +560,31 @@ kilo_config_dir = HOME / ".config" / "kilo"
 link(DOTFILES / "claude" / "CLAUDE.md",              kilo_config_dir / "AGENTS.md")
 link(DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jsonc")
 link(DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc")
-link(DOTFILES / "kilo" / ".kilo",                    kilo_config_dir / ".kilo")
+# Agents must land directly under ~/.config/kilo/agents, NOT nested inside a
+# linked ~/.config/kilo/.kilo/ directory: Kilo (an opencode fork) discovers
+# agents by globbing `{agent,agents}/**/*.md` *inside* each config directory
+# it already knows about, and ~/.config/kilo/ is that directory -- a file at
+# `.kilo/agents/number-one.md` relative to it has ".kilo" as its first path
+# segment, which the glob never matches. Confirmed empirically: linking the
+# whole .kilo/ directory (the old wiring) left `kilo agent list` never
+# mentioning number-one at all, no error, no warning.
+link(DOTFILES / "kilo" / ".kilo" / "agents",         kilo_config_dir / "agents")
+# `commands/` holds only a `.gitkeep` today (no real command files), so it is
+# deliberately NOT linked here yet -- Kilo's command glob also wants a
+# top-level `commands/` (confirmed: `{command,commands}/**/*.md`), so wire it
+# the same way as agents/ above once it actually holds content worth serving.
+#
+# The pre-fix wiring above also symlinked kilo/.kilo/ wholesale, which is why
+# ~/.config/kilo/.kilo may still exist as a leftover from before this fix;
+# clean up only that exact stale symlink, never anything else that might be
+# sitting at that path.
+_stale_dot_kilo_link = kilo_config_dir / ".kilo"
+if _stale_dot_kilo_link.is_symlink() and _stale_dot_kilo_link.readlink() == DOTFILES / "kilo" / ".kilo":
+    if DRY_RUN:
+        print(f"  remove stale link: {_stale_dot_kilo_link} -> {DOTFILES / 'kilo' / '.kilo'}")
+    else:
+        _stale_dot_kilo_link.unlink()
+        success(f"removed stale link {_stale_dot_kilo_link}")
 # Plugin directory must be a real symlink, not just a config-file reference:
 # kilo.jsonc's `plugin` array resolves relative paths against the *literal*
 # path of the config file (this symlink target's parent), not its realpath,
@@ -571,9 +595,213 @@ link(DOTFILES / "kilo" / "plugin",                   kilo_config_dir / "plugin")
 # ── GitHub Copilot CLI ───────────────────────────────────────────────────────────
 # Same one-source-of-truth pattern as Kilo above — Copilot CLI reads global
 # instructions from ~/.copilot/copilot-instructions.md, symlinked straight from
-# claude/CLAUDE.md rather than duplicated.
+# claude/CLAUDE.md rather than duplicated. Skills are shared the same way, from
+# claude/skills; everything genuinely Copilot-specific (the devcontainer hook
+# shim, its wiring, and the agent roster in Copilot's own schema) lives in
+# copilot/.
 log("GitHub Copilot CLI global config...")
-link(DOTFILES / "claude" / "CLAUDE.md", HOME / ".copilot" / "copilot-instructions.md")
+copilot_dir = HOME / ".copilot"
+link(DOTFILES / "claude" / "CLAUDE.md",      copilot_dir / "copilot-instructions.md")
+
+def strip_jsonc_line_comments(text: str) -> str:
+    """Drop whole-line `//` comments so json can parse copilot/settings.json.
+
+    copilot/settings.json is JSONC: the Copilot CLI accepts `//` comments, and a
+    `"//"` string key (the other obvious way to annotate JSON) is REJECTED by it,
+    so those comments have to stay comments. Every comment in that file is a whole
+    line by convention, which is what makes this one-liner sufficient -- a trailing
+    `//` after a value would defeat it, which is exactly why the convention exists
+    and why check_copilot_settings_parse() below says so when it fails.
+    """
+    return "\n".join(
+        ln for ln in text.splitlines() if not ln.lstrip().startswith("//")
+    )
+
+
+def check_copilot_settings_parse(src: Path) -> bool:
+    """Parse copilot/settings.json on EVERY run and shout if it does not parse.
+
+    AN UNPARSEABLE settings.json DISABLES THE DEVCONTAINER GUARD SILENTLY. That is
+    observed, not inferred: with one syntax error injected into
+    ~/.copilot/settings.json the CLI emitted no warning and no error, the
+    preToolUse hook never ran, and a write landed in a guarded repo. An unknown
+    top-level KEY does warn ("Ignoring unknown top-level key(s)") and trailing
+    commas are tolerated -- it is specifically the parse failure that says nothing.
+    The file is hand-maintained JSONC with ~80 comment lines, so a broken edit is
+    an ordinary accident rather than an exotic one, and its only symptom is a
+    session that is quietly unguarded.
+
+    So this runs unconditionally, and not only inside the detached-file branch
+    below where a parse error was previously swallowed by an `except ValueError`.
+    It is read-only and therefore --dry-run safe, and it catches every exception it
+    can rather than propagating one: install.py aborting on an unrelated
+    filesystem error would be a worse outcome than the report it is trying to make.
+    It returns False rather than raising, and the caller then declines to install
+    the symlink -- leaving whatever is already live in place instead of replacing
+    it with something known-broken.
+    """
+    try:
+        raw = src.read_text(encoding="utf-8")
+    except OSError as exc:
+        error(f"Could not read {src}: {exc}")
+        error("  The Copilot devcontainer guard's wiring could not be checked or installed.")
+        return False
+
+    def _reject_json_constant(name: str) -> float:
+        """Reject NaN/Infinity/-Infinity, which Python accepts and the CLI does not.
+
+        Those three bare tokens are a Python `json` EXTENSION; they are not in the
+        JSON grammar and the Copilot CLI's parser refuses them. Accepting one here
+        is a fail-OPEN in the one direction that matters: this check would pass,
+        install.py would link the file, and the CLI would then fail to parse it --
+        silently, exactly as the docstring above describes -- leaving the
+        devcontainer guard OFF for every session with nothing to say why. Raising
+        ValueError routes it into the same branch as any other syntax error.
+        """
+        raise ValueError(
+            f"{name} is a Python json extension, not JSON --"
+            " the Copilot CLI rejects it and would then run no hooks at all"
+        )
+
+    try:
+        parsed = json.loads(
+            strip_jsonc_line_comments(raw), parse_constant=_reject_json_constant
+        )
+    except ValueError as exc:
+        error(f"{src} IS NOT VALID JSON(C): {exc}")
+        error("  This is not cosmetic. The Copilot CLI does not report a settings file it")
+        error("  cannot parse -- no warning, no error -- it simply runs no hooks, so the")
+        error("  devcontainer guard would be silently OFF for every session.")
+        error("  Refusing to install it. Fix the syntax and re-run this script.")
+        error("  (This check is deliberately STRICTER than the CLI in two known ways, so")
+        error("   not everything it rejects is something the CLI would have choked on:")
+        error("   comments must be WHOLE-LINE `//` only, and a `//` after a value on the")
+        error("   same line fails here; and a TRAILING COMMA fails here even though the")
+        error("   CLI tolerates one. It is deliberately never more LENIENT than the CLI --")
+        error("   NaN and Infinity are refused here precisely because the CLI refuses")
+        error("   them, and letting them through would install a file the CLI cannot read.)")
+        return False
+    except Exception as exc:                     # never abort the whole install
+        error(f"Unexpected failure while checking {src}: {exc!r}")
+        error("  Refusing to install it. Inspect it by hand and re-run this script.")
+        return False
+
+    if not isinstance(parsed, dict):
+        error(f"{src} parsed as {type(parsed).__name__}, not a JSON object.")
+        error("  Refusing to install it -- the CLI expects a top-level object.")
+        return False
+
+    # Not a parse failure, so not fatal, but the same silent-fail-open family: a
+    # settings file that parses cleanly yet has lost its hook block leaves the
+    # session unguarded just as thoroughly, and just as quietly.
+    hooks = parsed.get("hooks")
+    pre = hooks.get("preToolUse") if isinstance(hooks, dict) else None
+    if not (isinstance(pre, list) and pre):
+        warn(f"{src} parses, but carries no hooks.preToolUse entry — the devcontainer"
+             " guard will NOT fire under Copilot. Installing it anyway; restore the hook"
+             " block if that was not deliberate.")
+    return True
+
+
+def report_detached_copilot_settings(src: Path, dst: Path) -> None:
+    """Warn when ~/.copilot/settings.json has stopped being our symlink.
+
+    THE SYMLINK IS NOT DURABLE. Copilot writes settings atomically -- temp file
+    plus rename -- so saving settings REPLACES the symlink with a regular file
+    rather than writing through it. Observed twice against an isolated
+    COPILOT_HOME, triggered by entirely ordinary actions: `copilot skill add`,
+    `copilot plugin install`, `/memory on|off`, `/settings ...`.
+
+    Nothing leaks into the repo when that happens -- the CLI writes its own file,
+    not ours. The damage is quieter: from that moment copilot/settings.json is no
+    longer the source of truth for the live config, so any edit to the guard's
+    matcher, timeout or hook path sits there doing nothing until install.py runs
+    again, with no error and no log line. That is the same silent-fail-open shape
+    the guard exists to prevent, so it gets a loud warning rather than a quiet
+    re-link. The rewrite also strips every `//` comment and normalizes the hook
+    schema; the hook block itself survived and kept firing in both observations.
+
+    Read-only and DRY_RUN-safe: this only looks and reports. The re-link is
+    link()'s job on the very next line, and link() moves the detached file to
+    .bak first, so nothing the CLI wrote is destroyed without a copy. It is still
+    named here key by key, because a .bak nobody is told about is not a backup.
+    """
+    if dst.is_symlink():
+        if dst.readlink() == src:
+            return                               # healthy
+        warn(f"{dst} is a symlink to {dst.readlink()}, not to {src} — re-linking.")
+        return
+    if not dst.exists():
+        return                                   # first install; link() creates it
+
+    warn(f"{dst} is a REGULAR FILE, not a symlink to {src}.")
+    warn("  The Copilot CLI rewrote it (a skill/plugin install, /memory or /settings all"
+         " do this), which detaches it from this repo. Until now, edits to"
+         " copilot/settings.json — including the devcontainer guard's wiring — have had"
+         " NO effect on the live config.")
+
+    # Name whatever the CLI added, so re-linking cannot silently drop a setting.
+    try:
+        live = json.loads(dst.read_text(encoding="utf-8"))
+        # The repo file is JSONC; strip_jsonc_line_comments() makes it parseable.
+        # A failure here is only a lost COMPARISON -- the file's own parseability
+        # is checked unconditionally by check_copilot_settings_parse() before this
+        # runs, so a syntax error is already loud by the time we get here and this
+        # `except` is no longer where it goes to die.
+        repo = json.loads(strip_jsonc_line_comments(src.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        warn("  Could not compare the two files; inspect them by hand before continuing.")
+        return
+
+    if isinstance(live, dict) and isinstance(repo, dict):
+        extra = sorted(set(live) - set(repo))
+        if extra:
+            warn(f"  Keys present only in the live file: {', '.join(extra)}. Re-linking"
+                 f" moves it to {dst.name}.bak — copy anything worth keeping into"
+                 " copilot/settings.json, then re-run this script.")
+        else:
+            warn("  It carries no top-level keys this repo's copy lacks, so re-linking"
+                 f" loses nothing but CLI-side formatting (a copy lands in {dst.name}.bak).")
+
+copilot_settings_src = DOTFILES / "copilot" / "settings.json"
+# UNCONDITIONAL, EVERY RUN, BEFORE THE LINK. A settings.json the CLI cannot parse
+# turns the devcontainer guard off with no warning of any kind (see the function's
+# docstring), so the only place that can be caught is here. Gate the symlink on it:
+# installing a file we know is broken would be actively worse than leaving the
+# previous one in place.
+copilot_settings_ok = check_copilot_settings_parse(copilot_settings_src)
+report_detached_copilot_settings(copilot_settings_src, copilot_dir / "settings.json")
+# Hooks must be configured in settings.json, NOT config.json. Put them in
+# config.json and they appear to work exactly once, after which the CLI migrates
+# them out, logs `Settings migration: "hooks" differs...` and deletes them --
+# leaving the devcontainer guard silently gone with nothing to notice. Copilot
+# says as much in config.json's own header ("User settings belong in
+# settings.json", "This file is managed automatically"), so config.json is
+# deliberately left alone here and never symlinked.
+#
+# This link is also the REPAIR for the detached case reported just above, not only
+# a first-install step: it is the only thing that reattaches the live config to
+# this repo after the CLI has rewritten it. Re-run install.py whenever
+# `ls -l ~/.copilot/settings.json` shows a regular file instead of a symlink.
+if copilot_settings_ok:
+    link(copilot_settings_src, copilot_dir / "settings.json")
+else:
+    error(f"SKIPPED linking {copilot_dir / 'settings.json'} — see the errors above.")
+# The hooks directory symlink is load-bearing, not cosmetic -- same class of trap
+# as Kilo's plugin dir above. copilot/settings.json invokes the guard as
+# `bash "$HOME/.copilot/hooks/require-devcontainer.sh"` (Copilot does expand
+# $HOME inside a hook command -- verified empirically, it is undocumented), so
+# without this link the script simply is not there and the guard never fires:
+# no error, no log line, just an unguarded session.
+link(DOTFILES / "copilot" / "hooks",         copilot_dir / "hooks")
+# Personal custom agents -- Copilot discovers them as ~/.copilot/agents/*.agent.md.
+link(DOTFILES / "copilot" / "agents",        copilot_dir / "agents")
+# Skills point at claude/skills deliberately: the SAME source of truth Claude
+# Code uses, not a copy. Copilot reads SKILL.md in the identical format, and a
+# whole-directory symlink here was confirmed to list every skill under "Personal
+# skills" in a live session and to actually load them. Same reasoning as
+# copilot-instructions.md above and Kilo's AGENTS.md -- one file, both tools.
+link(DOTFILES / "claude" / "skills",         copilot_dir / "skills")
 
 # ── devcontainer extras ───────────────────────────────────────────────────────
 if is_devcontainer():
@@ -678,3 +906,11 @@ if shell_changed:
     success("Done! Shell config changed -- open a new shell or: source ~/.zshrc (or ~/.bashrc)")
 else:
     success("Done! No shell-init files changed -- no new shell needed.")
+
+# Restated last, on purpose. A broken copilot/settings.json silently disables the
+# devcontainer guard, and an error a few hundred lines up the scrollback is an
+# error nobody reads. Non-zero exit so a caller (or CI) notices too.
+if not copilot_settings_ok:
+    error("copilot/settings.json did NOT parse and was not installed — the Copilot"
+          " devcontainer guard is not wired up. Fix it and re-run this script.")
+    sys.exit(1)
