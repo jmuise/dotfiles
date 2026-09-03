@@ -58,7 +58,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: hooks/pre-commit (spine drift + never-merge invariant)
-        run: bash hooks/pre-commit
+        run: |
+          bash hooks/pre-commit
+          echo "hooks/pre-commit passed: spine consistent, never-merge invariant intact"
 
   # Lint gate, scoped to the operational core: the installer entrypoint, the
   # git-hook machinery, the tools/ scripts, and the Claude hook scripts.
