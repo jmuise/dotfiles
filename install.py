@@ -282,6 +282,20 @@ if DRY_RUN:
 else:
     receipt = HOME / ".local" / "state" / "dotfiles" / "install-root"
     receipt.parent.mkdir(parents=True, exist_ok=True)
+    # Refuse to write through a symlink. write_text() opens with plain
+    # open(..., "w"), which follows symlinks and truncates whatever they
+    # point at -- a symlink planted at the receipt path (or its immediate
+    # parent dir) before this runs would turn a routine install into an
+    # attacker-chosen arbitrary-file overwrite. Same awareness as
+    # write_through_symlink() above, applied in the opposite direction: that
+    # helper deliberately follows a symlink because a user's own dotfile
+    # symlinks are meant to be written through; this receipt has no
+    # legitimate reason to ever be a symlink, so we refuse instead.
+    if receipt.parent.is_symlink():
+        error(f"{receipt.parent} is a symlink — refusing to write install receipt through it")
+        sys.exit(1)
+    if receipt.is_symlink():
+        receipt.unlink()
     receipt.write_text(f"{DOTFILES}\n", encoding="utf-8")
     success(f"Recorded install root ({DOTFILES}) -> {receipt}")
 
