@@ -61,6 +61,7 @@ _dotfiles_normalize_win_path() {
       # Win32 drive-letter form.
       if command -v cygpath >/dev/null 2>&1; then
         out=$(cygpath -u -- "$in" 2>/dev/null) || return 1
+        case "$out" in /*) ;; *) return 1;; esac
       else
         drive=$(printf '%s' "$in" | cut -c1 | tr '[:upper:]' '[:lower:]')
         rest=$(printf '%s' "$in" | cut -c3- | tr '\\' '/')
