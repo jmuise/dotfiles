@@ -262,6 +262,29 @@ if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
         run("git", "config", "--global", "--unset", "core.hooksPath")
         success("Removed global core.hooksPath (identity guard retired in favor of shell/doctor.sh)")
 
+# ── install receipt ──────────────────────────────────────────────────────────
+# Records which checkout this $HOME was deliberately installed from, so
+# hooks/_dispatch.sh can tell a real install from an incidental one. A `git
+# worktree add` shares the primary checkout's .git/config -- including the
+# core.hooksPath just set above -- and since `hooks` is a relative path it
+# resolves inside whichever checkout the hook actually fires from; without
+# this, a branch switch inside a brand-new, possibly-unreviewed worktree would
+# silently install that worktree's content into the real $HOME. Same for
+# `git clone -c core.hooksPath=hooks`, which persists the setting into a
+# fresh clone and fires on its first checkout. The receipt has to live
+# outside the repo (a clone would copy an in-repo marker along with it) and
+# outside .git/config (worktrees share that file), so ~/.local/state is the
+# only location that's both durable and tied to this $HOME rather than to any
+# one checkout. See hooks/_dispatch.sh for the guard that reads this back.
+log("Install receipt...")
+if DRY_RUN:
+    print(f"  would record install root: {DOTFILES}")
+else:
+    receipt = HOME / ".local" / "state" / "dotfiles" / "install-root"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(f"{DOTFILES}\n", encoding="utf-8")
+    success(f"Recorded install root ({DOTFILES}) -> {receipt}")
+
 # ── shell ─────────────────────────────────────────────────────────────────────
 # Only these files are sourced into a running shell's environment at startup, so
 # only a change here means an already-open shell is stale. Everything else this

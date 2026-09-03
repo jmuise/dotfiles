@@ -25,7 +25,38 @@ if [ -n "${DOTFILES_INSTALL_ACTIVE:-}" ]; then
   exit 0
 fi
 
-DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# pwd -P (not plain pwd) so a symlinked path to this checkout doesn't cause a
+# false mismatch against the physically-resolved path install.py recorded.
+DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
+
+# Canonical-install-receipt guard — must run before the uname case below so it
+# covers Windows/MINGW too, not just the Unix branch.
+#
+# A `git worktree add` shares the primary checkout's .git/config, including
+# core.hooksPath=hooks; since `hooks` is a relative path, it resolves inside
+# whichever checkout this hook actually fires from. Left unguarded, a branch
+# switch inside a brand-new, possibly-unreviewed worktree installs that
+# worktree's content into the real $HOME. Same story for
+# `git clone -c core.hooksPath=hooks <repo> <dir>`, which persists the setting
+# into a fresh clone and fires on its own first checkout.
+#
+# The guard: only run when $HOME already holds a receipt (written by a
+# deliberate install.sh/install.py run — see install.py) naming *this*
+# checkout as the one it was installed from. No receipt, or a receipt naming
+# a different checkout, is a silent no-op: a machine that has never had a
+# deliberate install must never get one from an incidental git operation. A
+# checkout that's been legitimately relocated re-arms itself by re-running
+# `bash install.sh` by hand, which rewrites the receipt to the new path.
+RECEIPT="$HOME/.local/state/dotfiles/install-root"
+if [ ! -f "$RECEIPT" ]; then
+  echo "dotfiles: no install receipt at $RECEIPT for checkout $DOTFILES_DIR — skipping hook-triggered install (this \$HOME has never had a deliberate install)"
+  exit 0
+fi
+RECORDED_DIR="$(cat "$RECEIPT" 2>/dev/null || true)"
+if [ "$RECORDED_DIR" != "$DOTFILES_DIR" ]; then
+  echo "dotfiles: install receipt points at '$RECORDED_DIR', this checkout is '$DOTFILES_DIR' — skipping hook-triggered install (run 'bash install.sh' here by hand to re-arm)"
+  exit 0
+fi
 
 case "$(uname -s)" in
   MINGW*|MSYS*)

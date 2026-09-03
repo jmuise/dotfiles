@@ -170,7 +170,7 @@ if (-not $pyPath) {
 # it in all three.
 log "Updating this checkout from origin (fast-forward only)..."
 if ($DryRun) {
-  Write-Host "  git -C $DOTFILES pull --ff-only origin"
+  Write-Host "  git -c fetch.pruneTags=false -C $DOTFILES pull --ff-only origin"
 } elseif (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   warn "git not on PATH — skipping self-update, continuing with the install"
 } else {
@@ -217,7 +217,13 @@ if ($DryRun) {
       # Output captured rather than printed so a routine up-to-date run stays
       # quiet, consistent with the *>$null suppression in the Scoop section;
       # it is echoed back only when the pull fails and you need to see why.
-      $pullOutput = @(git -C $DOTFILES pull --ff-only origin 2>&1)
+      # fetch.pruneTags=false overrides a global fetch.pruneTags=true for this
+      # one pull: that global setting makes an ordinary --ff-only pull
+      # silently delete every local tag not on origin, even on a no-op
+      # "Already up to date" pull. fetch.prune (remote-tracking branches) is
+      # left alone — only tag deletion is destructive to state a pull has no
+      # business touching.
+      $pullOutput = @(git -c fetch.pruneTags=false -C $DOTFILES pull --ff-only origin 2>&1)
       $pullExit   = $LASTEXITCODE
     }
   } catch {
