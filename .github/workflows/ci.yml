@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Syntax-only gate: no interpreter runs the code, it is only parsed.
+  # Covers the Python installer core and every tracked shell script,
+  # including the extensionless git hooks.
+  shell-python-syntax:
+    name: shell-python-syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: python -m py_compile install.py
+        run: python3 -m py_compile install.py
+
+      - name: bash -n on every tracked shell script
+        run: |
+          set -uo pipefail
+          status=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if bash -n "$f"; then
+              echo "ok    $f"
+            else
+              echo "FAIL  $f"
+              status=1
+            fi
+          done < <(
+            git ls-files \
+              '*.sh' \
+              'hooks/pre-commit' \
+              'hooks/post-checkout' \
+              'hooks/post-merge' \
+              'hooks/post-rewrite'
+          )
+          exit "$status"
+
+  # Invariant gate: runs the "number-one" agent-spine drift guard and the
+  # ABSOLUTE RULE (never-merge) invariant check. hooks/pre-commit reads the
+  # git index via `git show :<path>`, which on a fresh checkout is identical
+  # to HEAD, so the hook runs unmodified here with no staging step.
+  agent-spine-drift:
+    name: agent-spine-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: hooks/pre-commit (spine drift + never-merge invariant)
+        run: bash hooks/pre-commit
+
+  # Lint gate, scoped to the operational core: the installer entrypoint, the
+  # git-hook machinery, the tools/ scripts, and the Claude hook scripts.
+  # severity=warning so style-only info notes do not gate merges. The rc
+  # fragments under shell/ and the platform helpers under git/, wsl/, macos/
+  # and secrets/ are deliberately out of scope here (see PR description).
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck --severity=warning (operational core)
+        run: |
+          shellcheck --version
+          shellcheck --severity=warning --external-sources \
+            install.sh \
+            hooks/pre-commit \
+            hooks/_dispatch.sh \
+            tools/smart-editor.sh \
+            tools/start-project.sh \
+            tools/sync-agent.sh \
+            claude/hooks/block-ai-attribution.sh \
+            claude/hooks/block-pr-merge.sh \
+            claude/hooks/require-devcontainer.sh
