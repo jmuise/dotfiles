@@ -240,6 +240,15 @@ nothing stronger: no commit-blocking hook, no read-only file attributes. Refuse
 and warn is enough. (An unreachable remote fails the same way; the checkout is
 then simply stale, which is harmless.)
 
+**The pull is also non-destructive to local tags.** Both installers run it as
+`git -c fetch.pruneTags=false pull --ff-only origin`. Without that override, a
+global `fetch.pruneTags = true` (a reasonable thing to have set generally)
+makes an ordinary `--ff-only` pull silently delete every local tag not on
+`origin` — even a no-op "Already up to date" pull. `fetch.prune` for
+remote-tracking branches is left at whatever it's set to; only tag deletion is
+disabled, since that's the part with no legitimate reason to happen as a side
+effect of relinking dotfiles.
+
 **Why a WSL-driven Windows box still needs a real checkout on local disk.**
 When all the editing happens inside WSL it's tempting to keep exactly one
 checkout there and point Windows at it over `\\wsl.localhost\…`. That doesn't
@@ -448,6 +457,35 @@ immediately, leaving the outer run to do the relinking once. The variable is
 scoped to that single git invocation and restored straight after, so a `git
 pull` you type by hand still triggers a normal sync.
 
+**The hooks only fire on a checkout that was deliberately installed.** Every
+git operation above (`git worktree add`, `git clone -c core.hooksPath=hooks`,
+even an ordinary pull in an unrelated checkout that happens to inherit
+`core.hooksPath`) is a *potential* trigger, but the point of the installer is
+to touch `$HOME` on purpose, not incidentally. So the very first thing
+`hooks/_dispatch.sh` does — right after the re-entrancy guard above, and
+before it even looks at which platform it's on — is check for an install
+receipt: a plain text file at `~/.local/state/dotfiles/install-root`
+recording the physically-resolved path of whichever checkout `install.py`
+was last deliberately run from (that command being `bash install.sh` /
+`install.ps1`, run by hand, not a hook). It lives outside this repo (so
+cloning it doesn't carry a stale receipt along) and outside `.git/config`
+(so worktrees, which share that file with their primary checkout, don't
+inherit one either).
+
+If that file doesn't exist, or names a different checkout than the one the
+hook is running from, `_dispatch.sh` prints one line explaining why and exits
+without running anything. Concretely: a fresh `git clone` (even one seeded
+with `-c core.hooksPath=hooks`) no-ops on its first checkout because nothing
+has ever installed into that `$HOME` yet; a `git worktree add` off a
+previously-installed primary checkout no-ops too, because the receipt names
+the primary's path, not the worktree's. The canonical checkout itself is
+unaffected — its receipt matches, so `git pull`/`git rebase`/branch switches
+there keep triggering the installer exactly as described above. If you
+deliberately relocate a checkout that used to be canonical (`mv`, a fresh
+clone replacing the old directory, ...), re-run `bash install.sh` /
+`install.ps1` there by hand once to rewrite the receipt and re-arm the hooks
+for the new path.
+
 ## Structure
 
 ```
@@ -460,10 +498,12 @@ dotfiles/
 │   ├── .gitignore_global
 │   └── ensure-gcm.sh    ← installs a credential.helper on Linux/devcontainer if none exists, see secrets/README.md
 ├── hooks/                       ← core.hooksPath target, wired up by the installer
-│   ├── _dispatch.sh              ← shared logic: re-runs install.ps1/install.sh
+│   ├── _dispatch.sh              ← shared logic: re-runs install.ps1/install.sh,
+│   │                                gated on the install receipt, see above
 │   ├── post-checkout
 │   ├── post-merge
-│   └── post-rewrite
+│   ├── post-rewrite
+│   └── pre-commit                ← this repo's own commit-time checks
 ├── shell/
 │   ├── .bashrc
 │   ├── .bash_profile

@@ -262,6 +262,43 @@ if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
         run("git", "config", "--global", "--unset", "core.hooksPath")
         success("Removed global core.hooksPath (identity guard retired in favor of shell/doctor.sh)")
 
+# ── install receipt ──────────────────────────────────────────────────────────
+# Records which checkout this $HOME was deliberately installed from, so
+# hooks/_dispatch.sh can tell a real install from an incidental one. A `git
+# worktree add` shares the primary checkout's .git/config -- including the
+# core.hooksPath just set above -- and since `hooks` is a relative path it
+# resolves inside whichever checkout the hook actually fires from; without
+# this, a branch switch inside a brand-new, possibly-unreviewed worktree would
+# silently install that worktree's content into the real $HOME. Same for
+# `git clone -c core.hooksPath=hooks`, which persists the setting into a
+# fresh clone and fires on its first checkout. The receipt has to live
+# outside the repo (a clone would copy an in-repo marker along with it) and
+# outside .git/config (worktrees share that file), so ~/.local/state is the
+# only location that's both durable and tied to this $HOME rather than to any
+# one checkout. See hooks/_dispatch.sh for the guard that reads this back.
+log("Install receipt...")
+if DRY_RUN:
+    print(f"  would record install root: {DOTFILES}")
+else:
+    receipt = HOME / ".local" / "state" / "dotfiles" / "install-root"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    # Refuse to write through a symlink. write_text() opens with plain
+    # open(..., "w"), which follows symlinks and truncates whatever they
+    # point at -- a symlink planted at the receipt path (or its immediate
+    # parent dir) before this runs would turn a routine install into an
+    # attacker-chosen arbitrary-file overwrite. Same awareness as
+    # write_through_symlink() above, applied in the opposite direction: that
+    # helper deliberately follows a symlink because a user's own dotfile
+    # symlinks are meant to be written through; this receipt has no
+    # legitimate reason to ever be a symlink, so we refuse instead.
+    if receipt.parent.is_symlink():
+        error(f"{receipt.parent} is a symlink — refusing to write install receipt through it")
+        sys.exit(1)
+    if receipt.is_symlink():
+        receipt.unlink()
+    receipt.write_text(f"{DOTFILES}\n", encoding="utf-8")
+    success(f"Recorded install root ({DOTFILES}) -> {receipt}")
+
 # ── shell ─────────────────────────────────────────────────────────────────────
 # Only these files are sourced into a running shell's environment at startup, so
 # only a change here means an already-open shell is stale. Everything else this

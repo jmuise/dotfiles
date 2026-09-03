@@ -42,7 +42,7 @@ done
 
 self_update() {
   if [[ "$DRY_RUN" == "1" ]]; then
-    echo "  git -C $DOTFILES_DIR pull --ff-only origin" >&2
+    echo "  git -c fetch.pruneTags=false -C $DOTFILES_DIR pull --ff-only origin" >&2
     return 0
   fi
   skip() { echo "install.sh: skipping self-update — $1" >&2; }
@@ -59,7 +59,13 @@ self_update() {
   git -C "$DOTFILES_DIR" rev-parse --verify --quiet '@{upstream}' >/dev/null 2>&1 \
     || { skip "no upstream branch"; return 0; }
 
-  if DOTFILES_INSTALL_ACTIVE=1 git -C "$DOTFILES_DIR" pull --ff-only origin >/dev/null 2>&1; then
+  # fetch.pruneTags=false overrides the Captain's global fetch.pruneTags=true
+  # for this one pull: that global setting makes an ordinary --ff-only pull
+  # silently delete every local tag not on origin, even on a no-op
+  # "Already up to date" pull. fetch.prune (remote-tracking branches) is left
+  # alone — only tag deletion is destructive to state a pull has no business
+  # touching.
+  if DOTFILES_INSTALL_ACTIVE=1 git -c fetch.pruneTags=false -C "$DOTFILES_DIR" pull --ff-only origin >/dev/null 2>&1; then
     return 0
   fi
 
