@@ -1,0 +1,35 @@
+---
+# Layer 1 entry point: machine state via Ansible.
+#
+#   ansible-playbook site.yml -e profile=bare
+#   ansible-playbook site.yml -e profile=inline
+#   ansible-playbook site.yml -e profile=agentic
+#
+# Always safe to dry-run first:
+#
+#   ansible-playbook site.yml -e profile=inline --check --diff
+#
+# This spike wires up exactly one role (`packages`). Later layers/roles
+# (shell, git config, editor, secrets plumbing) hang off this same play.
+
+- name: Provision machine state
+  hosts: all
+  gather_facts: true
+
+  vars:
+    # Overridable on the command line with -e profile=<tier>.
+    profile: bare
+
+  pre_tasks:
+    - name: Validate the requested profile
+      ansible.builtin.assert:
+        that:
+          - profile in profile_ranks
+        fail_msg: >-
+          Unknown profile {{ profile | to_json }}.
+          Pass -e profile=<{{ profile_ranks.keys() | join('|') }}>.
+        success_msg: "profile = {{ profile }} (rank {{ profile_rank }})"
+        quiet: true
+
+  roles:
+    - role: packages

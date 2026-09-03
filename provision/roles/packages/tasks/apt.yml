@@ -1,0 +1,34 @@
+---
+# Debian/Ubuntu/WSL branch. Source of truth is packages/apt.txt at the repo
+# root -- the same file `xargs sudo apt-get install` consumes today.
+
+- name: Read the apt manifest (packages/apt.txt)
+  ansible.builtin.slurp:
+    src: "{{ packages_apt_manifest }}"
+  register: _packages_apt_raw
+
+- name: Resolve the apt manifest to a package list
+  ansible.builtin.set_fact:
+    # Strip inline/full-line "#" comments, trim, drop blanks, drop anything
+    # this host intentionally sources elsewhere (packages_apt_exclude).
+    packages_apt_wanted: >-
+      {{
+        (_packages_apt_raw.content | b64decode).splitlines()
+        | map('regex_replace', '#.*$', '')
+        | map('trim')
+        | reject('equalto', '')
+        | reject('in', packages_apt_exclude)
+        | list
+      }}
+
+- name: Show the resolved apt package list
+  ansible.builtin.debug:
+    var: packages_apt_wanted
+
+- name: Ensure apt packages from packages/apt.txt are present
+  become: "{{ packages_apt_become | bool }}"
+  ansible.builtin.apt:
+    name: "{{ packages_apt_wanted }}"
+    state: present
+    update_cache: "{{ packages_apt_update_cache | bool }}"
+    cache_valid_time: "{{ packages_apt_cache_valid_time | int }}"
