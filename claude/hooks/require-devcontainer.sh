@@ -113,6 +113,29 @@ block() {
   exit 2
 }
 
+# Am I in *some* container? Any one signal is sufficient. This intentionally
+# does not try to prove it is *this project's* container -- the failure being
+# guarded against is work landing on the bare host.
+#
+# This runs BEFORE the git probe below on purpose. in_container reads only
+# /.dockerenv, /proc/1/cgroup and two env vars -- nothing the git probe
+# produces -- so moving it up introduces no bypass, and taking the container
+# escape first means a benign git failure cannot deny every Bash/Edit/Write
+# *inside a container*, where there is no host to protect. The common trigger
+# is not theoretical: on a Linux devcontainer with a bind-mounted workspace
+# the container uid routinely differs from the host uid, so git emits
+# `fatal: detected dubious ownership...` for every command until safe.directory
+# is set. The .no-auto-provision marker check stays BELOW the probe because it
+# needs $project_root.
+in_container() {
+  [ -f /.dockerenv ] && return 0
+  [ -r /proc/1/cgroup ] && grep -qE '(docker|containerd)' /proc/1/cgroup && return 0
+  [ "${REMOTE_CONTAINERS:-}" = "true" ] && return 0
+  [ -n "${CODESPACES:-}" ] && return 0
+  return 1
+}
+in_container && exit 0
+
 # Which repo, if any, owns this target? Issue #3: a git *failure* here used to be
 # indistinguishable from "not a git repo". The old line was
 #   project_root=$(git ... rev-parse --show-toplevel 2>/dev/null) || exit 0
@@ -124,11 +147,25 @@ block() {
 #
 # One git invocation still, same as before -- `2>&1` keeps stderr so the failure
 # can be classified instead of thrown away. On success stdout is the path and
-# stderr is empty, so the merged capture is clean. block() is defined just above
-# (moved up from its old spot below in_container) so this path can reach it;
-# project_root is reset to "" before any block() call because block() interpolates
-# $project_root under `set -u` and would otherwise trip the ERR trap with a
-# misleading "guard itself failed" message.
+# stderr is empty, so the merged capture is clean. block() and in_container are
+# both defined just above, so this path can reach block() and the container
+# escape has already been taken; project_root is reset to "" before any block()
+# call because block() interpolates $project_root under `set -u` and would
+# otherwise trip the ERR trap with a misleading "guard itself failed" message.
+#
+# The classification matches git's fatal messages as PREFIXES, not substrings.
+# git echoes repo paths and config values verbatim into its fatal text, so that
+# text is attacker-influenceable: a guarded repo whose .git/config carries
+#   [core]
+#       bare = not a git repository
+# makes git die with
+#   fatal: bad boolean config value 'not a git repository' for 'core.bare'
+# and an unanchored *"not a git repository"* match would read that as
+# out-of-scope and ALLOW every command against the repo. The genuine messages
+# are `fatal: not a git repository...` and `fatal: this operation must be run in
+# a work tree`; `export LC_ALL=C` above pins git to English so those exact
+# leading forms are reliable. Anything that only CONTAINS the phrase further
+# along the line is a crafted message and must fall through to the default deny.
 project_root=""
 if project_root=$(git -C "$target" rev-parse --show-toplevel 2>&1); then
   :   # success: project_root holds the work-tree root
@@ -136,8 +173,8 @@ else
   git_err=$project_root
   project_root=""
   case "$git_err" in
-  *"not a git repository"*) exit 0 ;;          # genuinely not a repo -- out of scope
-  *"must be run in a work tree"* | *"this operation must be run in a work tree"*)
+  "fatal: not a git repository"*) exit 0 ;;    # genuinely not a repo -- out of scope
+  "fatal: this operation must be run in a work tree"*)
     exit 0 ;;                                  # bare repo / no work tree -- out of scope, as before
   *)
     block "could not determine the git repository state of \"$target\" -- git failed with: ${git_err:-<no output>}. The guard is refusing this call rather than assuming the path is unguarded. Fix the underlying git problem (git missing from PATH, dubious ownership, a locked or corrupt repo) or relaunch inside the container."
@@ -154,17 +191,8 @@ fi
 # for the marker and never for a hardcoded path -- the marker is the mechanism.
 [ -f "$project_root/.no-auto-provision" ] && exit 0
 
-# Am I in *some* container? Any one signal is sufficient. This intentionally
-# does not try to prove it is *this project's* container -- the failure being
-# guarded against is work landing on the bare host.
-in_container() {
-  [ -f /.dockerenv ] && return 0
-  [ -r /proc/1/cgroup ] && grep -qE '(docker|containerd)' /proc/1/cgroup && return 0
-  [ "${REMOTE_CONTAINERS:-}" = "true" ] && return 0
-  [ -n "${CODESPACES:-}" ] && return 0
-  return 1
-}
-in_container && exit 0
+# (in_container is defined and consulted above, before the git probe, so a
+# benign git failure cannot deny work that is already safely containerized.)
 
 # Mutating a project file from the bare host has no legitimate form once this
 # rule exists, so there is nothing to allowlist here.
@@ -247,7 +275,20 @@ while IFS= read -r segment; do
 
   find)
     # find is a read tool until it isn't: -exec/-delete make it arbitrary.
-    if printf '%s' "$segment" | grep -qE '(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprintf|fls)([[:space:]]|$)'; then
+    # Bash-native `[[ =~ ]]`, NOT `printf ... | grep`: a subprocess in this arm
+    # runs once PER SEGMENT -- roughly 1000x the cost of the allowlist arms --
+    # and a single Bash call chaining thousands of `find` segments while still
+    # under the 64 KiB ceiling could burn the entire 30s pinned hook budget on
+    # fork/exec before the loop ever reaches a dangerous tail segment. A
+    # timed-out PreToolUse hook does NOT block, so that is a fail-open, and the
+    # ceiling does not bound it. `[[ =~ ]]` forks nothing. The pattern is held
+    # in a variable and the RHS left UNQUOTED so it is parsed as an ERE (a
+    # quoted RHS matches literally and would silently neuter the check); it is
+    # byte-for-byte the same ERE, character classes included, that `grep -E`
+    # used. As the condition of an `if` a non-match does not trip `set -e` /
+    # the ERR trap. It clobbers BASH_REMATCH, which nothing here reads.
+    find_mutating_re='(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprintf|fls)([[:space:]]|$)'
+    if [[ $segment =~ $find_mutating_re ]]; then
       block "find with -exec/-delete can mutate the tree"
     fi
     ;;
