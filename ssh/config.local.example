@@ -10,11 +10,11 @@
 # ── jump host pattern ─────────────────────────────────────────────────────────
 # Host *.internal
 #     ProxyJump   bastion.example.com
-#     User        jeremy
+#     User        you
 
 # ── example host ─────────────────────────────────────────────────────────────
 # Host myserver
 #     HostName    192.168.1.100
-#     User        jeremy
+#     User        you
 #     IdentityFile ~/.ssh/id_ed25519_myserver
 #     Port        22

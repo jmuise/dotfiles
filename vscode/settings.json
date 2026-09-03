@@ -134,12 +134,6 @@
   "dev.containers.mountWaylandSocket": false,
   "task.allowAutomaticTasks": "on",
 
-  // ── todo-tree ────────────────────────────────────────────────────────────────
-  // todo-tree calls fs.existsSync() directly on this value (no PATH search, no
-  // env-var expansion), so it must be a literal absolute path to the binary.
-  // This is winget's stable per-user shim for BurntSushi.ripgrep.MSVC (see
-  // packages/winget.txt) - not tied to a manually-installed package manager.
-  "todo-tree.ripgrep.ripgrep": "C:\\Users\\jerem\\AppData\\Local\\Microsoft\\WinGet\\Links\\rg.exe",
   "diffEditor.hideUnchangedRegions.enabled": true,
   "diffEditor.renderSideBySide": false,
 }

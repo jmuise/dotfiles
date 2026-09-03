@@ -32,9 +32,9 @@ fi
 # of the receipt check come from different toolchains and render the *same*
 # physical directory two different ways:
 #   - install.py runs under native Windows Python and writes the Win32 form,
-#     e.g. C:\Users\jeremy\dotfiles
+#     e.g. C:\Users\you\dotfiles
 #   - this hook runs under Git-for-Windows' MSYS sh and computes DOTFILES_DIR
-#     with `pwd -P`, giving the POSIX/MSYS form, e.g. /c/Users/jeremy/dotfiles
+#     with `pwd -P`, giving the POSIX/MSYS form, e.g. /c/Users/you/dotfiles
 # A raw string compare of those two can never match, so the receipt guard
 # would fail closed forever on Windows -- safe, but it permanently disables
 # the sync this guard exists to allow. This function maps either form to one
