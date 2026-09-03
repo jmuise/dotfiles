@@ -37,8 +37,10 @@
 # at the newline *regardless* of a trailing backslash, so `ls -la #\` + newline
 # + `bash evil.sh` spliced into one segment headed by an allowlisted `ls` and
 # ran arbitrary code against a guarded working tree. The splice was also
-# quadratic in line count -- ~176s on 32k lines, past Claude Code's 60s default
-# hook timeout, and a timed-out hook does not exit 2, so the tool call proceeds.
+# quadratic in line count -- ~176s on 32k lines, past the PreToolUse hook
+# timeout (600s by default in Claude Code, pinned to 30s for this hook in
+# claude/settings.json), and a timed-out hook does not exit 2, so the tool call
+# proceeds.
 # An ACE bypass and a fail-open, bought for the convenience of not retyping a
 # command on one line. Modelling shell quoting and comments does not belong in a
 # security guard; when a continuation is refused, join the lines. The over-block
@@ -59,6 +61,15 @@ set -Eeuo pipefail
 # trap from inside it does not help (the subshell only disarms its own copy),
 # and the exit code is 2 either way, so the duplication is left alone.
 trap 'echo "BLOCKED by claude/hooks/require-devcontainer.sh: the guard itself failed unexpectedly near line $LINENO, so this call is refused rather than silently allowed. This is a bug in the hook, not in your command -- report it to the Captain." >&2; exit 2' ERR
+
+# Pin the C locale, exactly as copilot/hooks/require-devcontainer.sh does and for
+# the same reason: the command-size ceiling below is enforced with `${#command}`,
+# and under a UTF-8 locale that counts CHARACTERS, so an all-multibyte command
+# could carry several times the byte budget the check reports and undercount its
+# way past the ceiling into the super-linear segment loop. In the C locale
+# `${#command}` is a true byte count. It also makes grep/sed treat the command as
+# opaque bytes rather than possibly refusing invalid UTF-8.
+export LC_ALL=C
 
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
@@ -93,8 +104,49 @@ while [ ! -d "$target" ] && [ "$target" != "/" ] && [ -n "$target" ]; do
   target=$(dirname -- "$target")
 done
 
-# Not inside a git repo at all (scratch dir, $HOME, /tmp) -- out of scope.
-project_root=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) || exit 0
+block() {
+  echo "BLOCKED by claude/hooks/require-devcontainer.sh: $1" >&2
+  # agent_type (parsed above, hardcoded as "kilo"/"copilot" by those shims) is
+  # available here if a future tool-specific message is ever wanted -- that
+  # would be a `case "$agent_type"` in this function, not an interface change.
+  echo "This session is not running inside the devcontainer for the project at $project_root, so it may not edit its files or run project commands against it. Getting containerized means relaunching the session inside the container; no worker can arrange that for itself mid-task, and host-side work is never the substitute. If the project has no .devcontainer/ yet, retrofitting one needs the Captain's confirmation first; if it has one and this session simply isn't in it, the session needs relaunching inside it. Route that through whatever provisioning path this CLI has -- and if it has none, stop and tell the Captain rather than working around it. The \`devcontainer-first\` skill holds the full decision tree. (Agent: \"$agent_type\")" >&2
+  exit 2
+}
+
+# Which repo, if any, owns this target? Issue #3: a git *failure* here used to be
+# indistinguishable from "not a git repo". The old line was
+#   project_root=$(git ... rev-parse --show-toplevel 2>/dev/null) || exit 0
+# so git missing from PATH (127), dubious-ownership (128), a locked or corrupt
+# repo (128) -- every one of them -- discarded stderr and fell through to a
+# silent ALLOW. Only a genuine "not a git repository" (and the bare-repo
+# "must be run in a work tree", which the old code also allowed) is out of scope;
+# any OTHER git failure leaves repo state UNKNOWN, and unknown state must DENY.
+#
+# One git invocation still, same as before -- `2>&1` keeps stderr so the failure
+# can be classified instead of thrown away. On success stdout is the path and
+# stderr is empty, so the merged capture is clean. block() is defined just above
+# (moved up from its old spot below in_container) so this path can reach it;
+# project_root is reset to "" before any block() call because block() interpolates
+# $project_root under `set -u` and would otherwise trip the ERR trap with a
+# misleading "guard itself failed" message.
+project_root=""
+if project_root=$(git -C "$target" rev-parse --show-toplevel 2>&1); then
+  :   # success: project_root holds the work-tree root
+else
+  git_err=$project_root
+  project_root=""
+  case "$git_err" in
+  *"not a git repository"*) exit 0 ;;          # genuinely not a repo -- out of scope
+  *"must be run in a work tree"* | *"this operation must be run in a work tree"*)
+    exit 0 ;;                                  # bare repo / no work tree -- out of scope, as before
+  *)
+    block "could not determine the git repository state of \"$target\" -- git failed with: ${git_err:-<no output>}. The guard is refusing this call rather than assuming the path is unguarded. Fix the underlying git problem (git missing from PATH, dubious ownership, a locked or corrupt repo) or relaunch inside the container."
+    ;;
+  esac
+fi
+
+# Belt-and-braces for the racy case where the tree vanishes after a clean
+# rev-parse: an empty root is treated as genuinely-not-a-repo, exactly as before.
 [ -n "$project_root" ] || exit 0
 
 # The portable opt-out: a repo whose job is configuring the host it lives on
@@ -114,15 +166,6 @@ in_container() {
 }
 in_container && exit 0
 
-block() {
-  echo "BLOCKED by claude/hooks/require-devcontainer.sh: $1" >&2
-  # agent_type (parsed above, hardcoded as "kilo"/"copilot" by those shims) is
-  # available here if a future tool-specific message is ever wanted -- that
-  # would be a `case "$agent_type"` in this function, not an interface change.
-  echo "This session is not running inside the devcontainer for the project at $project_root, so it may not edit its files or run project commands against it. Getting containerized means relaunching the session inside the container; no worker can arrange that for itself mid-task, and host-side work is never the substitute. If the project has no .devcontainer/ yet, retrofitting one needs the Captain's confirmation first; if it has one and this session simply isn't in it, the session needs relaunching inside it. Route that through whatever provisioning path this CLI has -- and if it has none, stop and tell the Captain rather than working around it. The \`devcontainer-first\` skill holds the full decision tree. (Agent: \"$agent_type\")" >&2
-  exit 2
-}
-
 # Mutating a project file from the bare host has no legitimate form once this
 # rule exists, so there is nothing to allowlist here.
 if [ "$tool_name" != "Bash" ]; then
@@ -131,6 +174,21 @@ fi
 
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -n "$command" ] || exit 0
+
+# Issue #4: the segment loop further down is super-linear (~n^1.4) in the length
+# of the command and carries no deadline of its own. A PreToolUse hook that times
+# out does NOT block -- Claude Code lets the call proceed -- so a command long
+# enough to blow the hook timeout is a silent fail-open. Cap the input at a size
+# the loop chews through in a small fraction of a second, far inside the 30s this
+# hook is pinned to in claude/settings.json, so the ceiling is always the thing
+# that trips first and the timeout is never reached. ${#command} is a BYTE count
+# here only because of the `export LC_ALL=C` at the top of this file; under a
+# UTF-8 locale it would count characters and a multibyte command could undercount
+# its way past the ceiling. Mirrors MAX_PAYLOAD_BYTES in
+# copilot/hooks/require-devcontainer.sh.
+if [ "${#command}" -gt 65536 ]; then
+  block "the Bash command is ${#command} bytes, over the 65536-byte (64 KB) ceiling this guard will inspect on the host. A command that large risks running the guard past its hook timeout, and a timed-out hook does not block -- so it is refused here instead. Split it into smaller commands, or run it inside the container."
+fi
 
 # Fold newlines to spaces for the two text passes below, exactly as
 # block-pr-merge.sh does and for the same reason: grep is line-oriented, so a real
