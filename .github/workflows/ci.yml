@@ -20,7 +20,7 @@ jobs:
     name: shell-python-syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: python -m py_compile install.py
         run: python3 -m py_compile install.py
@@ -55,7 +55,7 @@ jobs:
     name: agent-spine-drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: hooks/pre-commit (spine drift + never-merge invariant)
         run: bash hooks/pre-commit
@@ -69,7 +69,7 @@ jobs:
     name: shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: shellcheck --severity=warning (operational core)
         run: |
