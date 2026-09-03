@@ -293,8 +293,8 @@ In every case tested the global guardrail hooks still fired and still blocked, i
 The Claude Code install that's actually kept current lives **inside WSL**. So
 that muscle memory still works from the Windows side, `powershell/profile.ps1`
 defines a `claude` **function** that starts a session inside Debian, in the
-translated working directory (`C:\Users\jerem\code\foo` →
-`/mnt/c/Users/jerem/code/foo`), with the exit code handed back to the caller.
+translated working directory (`C:\Users\you\code\foo` →
+`/mnt/c/Users/you/code/foo`), with the exit code handed back to the caller.
 
 **What's covered — and what isn't.** The function is the only forwarding
 mechanism, so it applies exactly where the profile is loaded:
