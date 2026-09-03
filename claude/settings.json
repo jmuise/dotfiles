@@ -26,7 +26,8 @@
           },
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\""
+            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\"",
+            "timeout": 30
           }
         ]
       },
@@ -35,7 +36,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\""
+            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\"",
+            "timeout": 30
           }
         ]
       },
@@ -44,7 +46,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\""
+            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\"",
+            "timeout": 30
           }
         ]
       },
@@ -53,7 +56,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\""
+            "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\"",
+            "timeout": 30
           }
         ]
       }

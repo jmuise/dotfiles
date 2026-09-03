@@ -37,8 +37,10 @@
 # at the newline *regardless* of a trailing backslash, so `ls -la #\` + newline
 # + `bash evil.sh` spliced into one segment headed by an allowlisted `ls` and
 # ran arbitrary code against a guarded working tree. The splice was also
-# quadratic in line count -- ~176s on 32k lines, past Claude Code's 60s default
-# hook timeout, and a timed-out hook does not exit 2, so the tool call proceeds.
+# quadratic in line count -- ~176s on 32k lines, past the PreToolUse hook
+# timeout (600s by default in Claude Code, pinned to 30s for this hook in
+# claude/settings.json), and a timed-out hook does not exit 2, so the tool call
+# proceeds.
 # An ACE bypass and a fail-open, bought for the convenience of not retyping a
 # command on one line. Modelling shell quoting and comments does not belong in a
 # security guard; when a continuation is refused, join the lines. The over-block
@@ -59,6 +61,15 @@ set -Eeuo pipefail
 # trap from inside it does not help (the subshell only disarms its own copy),
 # and the exit code is 2 either way, so the duplication is left alone.
 trap 'echo "BLOCKED by claude/hooks/require-devcontainer.sh: the guard itself failed unexpectedly near line $LINENO, so this call is refused rather than silently allowed. This is a bug in the hook, not in your command -- report it to the Captain." >&2; exit 2' ERR
+
+# Pin the C locale, exactly as copilot/hooks/require-devcontainer.sh does and for
+# the same reason: the command-size ceiling below is enforced with `${#command}`,
+# and under a UTF-8 locale that counts CHARACTERS, so an all-multibyte command
+# could carry several times the byte budget the check reports and undercount its
+# way past the ceiling into the super-linear segment loop. In the C locale
+# `${#command}` is a true byte count. It also makes grep/sed treat the command as
+# opaque bytes rather than possibly refusing invalid UTF-8.
+export LC_ALL=C
 
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
@@ -93,27 +104,6 @@ while [ ! -d "$target" ] && [ "$target" != "/" ] && [ -n "$target" ]; do
   target=$(dirname -- "$target")
 done
 
-# Not inside a git repo at all (scratch dir, $HOME, /tmp) -- out of scope.
-project_root=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ -n "$project_root" ] || exit 0
-
-# The portable opt-out: a repo whose job is configuring the host it lives on
-# (the dotfiles repo being the first such) drops this marker at its root. Test
-# for the marker and never for a hardcoded path -- the marker is the mechanism.
-[ -f "$project_root/.no-auto-provision" ] && exit 0
-
-# Am I in *some* container? Any one signal is sufficient. This intentionally
-# does not try to prove it is *this project's* container -- the failure being
-# guarded against is work landing on the bare host.
-in_container() {
-  [ -f /.dockerenv ] && return 0
-  [ -r /proc/1/cgroup ] && grep -qE '(docker|containerd)' /proc/1/cgroup && return 0
-  [ "${REMOTE_CONTAINERS:-}" = "true" ] && return 0
-  [ -n "${CODESPACES:-}" ] && return 0
-  return 1
-}
-in_container && exit 0
-
 block() {
   echo "BLOCKED by claude/hooks/require-devcontainer.sh: $1" >&2
   # agent_type (parsed above, hardcoded as "kilo"/"copilot" by those shims) is
@@ -123,6 +113,87 @@ block() {
   exit 2
 }
 
+# Am I in *some* container? Any one signal is sufficient. This intentionally
+# does not try to prove it is *this project's* container -- the failure being
+# guarded against is work landing on the bare host.
+#
+# This runs BEFORE the git probe below on purpose. in_container reads only
+# /.dockerenv, /proc/1/cgroup and two env vars -- nothing the git probe
+# produces -- so moving it up introduces no bypass, and taking the container
+# escape first means a benign git failure cannot deny every Bash/Edit/Write
+# *inside a container*, where there is no host to protect. The common trigger
+# is not theoretical: on a Linux devcontainer with a bind-mounted workspace
+# the container uid routinely differs from the host uid, so git emits
+# `fatal: detected dubious ownership...` for every command until safe.directory
+# is set. The .no-auto-provision marker check stays BELOW the probe because it
+# needs $project_root.
+in_container() {
+  [ -f /.dockerenv ] && return 0
+  [ -r /proc/1/cgroup ] && grep -qE '(docker|containerd)' /proc/1/cgroup && return 0
+  [ "${REMOTE_CONTAINERS:-}" = "true" ] && return 0
+  [ -n "${CODESPACES:-}" ] && return 0
+  return 1
+}
+in_container && exit 0
+
+# Which repo, if any, owns this target? Issue #3: a git *failure* here used to be
+# indistinguishable from "not a git repo". The old line was
+#   project_root=$(git ... rev-parse --show-toplevel 2>/dev/null) || exit 0
+# so git missing from PATH (127), dubious-ownership (128), a locked or corrupt
+# repo (128) -- every one of them -- discarded stderr and fell through to a
+# silent ALLOW. Only a genuine "not a git repository" (and the bare-repo
+# "must be run in a work tree", which the old code also allowed) is out of scope;
+# any OTHER git failure leaves repo state UNKNOWN, and unknown state must DENY.
+#
+# One git invocation still, same as before -- `2>&1` keeps stderr so the failure
+# can be classified instead of thrown away. On success stdout is the path and
+# stderr is empty, so the merged capture is clean. block() and in_container are
+# both defined just above, so this path can reach block() and the container
+# escape has already been taken; project_root is reset to "" before any block()
+# call because block() interpolates $project_root under `set -u` and would
+# otherwise trip the ERR trap with a misleading "guard itself failed" message.
+#
+# The classification matches git's fatal messages as PREFIXES, not substrings.
+# git echoes repo paths and config values verbatim into its fatal text, so that
+# text is attacker-influenceable: a guarded repo whose .git/config carries
+#   [core]
+#       bare = not a git repository
+# makes git die with
+#   fatal: bad boolean config value 'not a git repository' for 'core.bare'
+# and an unanchored *"not a git repository"* match would read that as
+# out-of-scope and ALLOW every command against the repo. The genuine messages
+# are `fatal: not a git repository...` and `fatal: this operation must be run in
+# a work tree`; `export LC_ALL=C` above pins git to English so those exact
+# leading forms are reliable. Anything that only CONTAINS the phrase further
+# along the line is a crafted message and must fall through to the default deny.
+project_root=""
+if project_root=$(git -C "$target" rev-parse --show-toplevel 2>&1); then
+  :   # success: project_root holds the work-tree root
+else
+  git_err=$project_root
+  project_root=""
+  case "$git_err" in
+  "fatal: not a git repository"*) exit 0 ;;    # genuinely not a repo -- out of scope
+  "fatal: this operation must be run in a work tree"*)
+    exit 0 ;;                                  # bare repo / no work tree -- out of scope, as before
+  *)
+    block "could not determine the git repository state of \"$target\" -- git failed with: ${git_err:-<no output>}. The guard is refusing this call rather than assuming the path is unguarded. Fix the underlying git problem (git missing from PATH, dubious ownership, a locked or corrupt repo) or relaunch inside the container."
+    ;;
+  esac
+fi
+
+# Belt-and-braces for the racy case where the tree vanishes after a clean
+# rev-parse: an empty root is treated as genuinely-not-a-repo, exactly as before.
+[ -n "$project_root" ] || exit 0
+
+# The portable opt-out: a repo whose job is configuring the host it lives on
+# (the dotfiles repo being the first such) drops this marker at its root. Test
+# for the marker and never for a hardcoded path -- the marker is the mechanism.
+[ -f "$project_root/.no-auto-provision" ] && exit 0
+
+# (in_container is defined and consulted above, before the git probe, so a
+# benign git failure cannot deny work that is already safely containerized.)
+
 # Mutating a project file from the bare host has no legitimate form once this
 # rule exists, so there is nothing to allowlist here.
 if [ "$tool_name" != "Bash" ]; then
@@ -131,6 +202,21 @@ fi
 
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -n "$command" ] || exit 0
+
+# Issue #4: the segment loop further down is super-linear (~n^1.4) in the length
+# of the command and carries no deadline of its own. A PreToolUse hook that times
+# out does NOT block -- Claude Code lets the call proceed -- so a command long
+# enough to blow the hook timeout is a silent fail-open. Cap the input at a size
+# the loop chews through in a small fraction of a second, far inside the 30s this
+# hook is pinned to in claude/settings.json, so the ceiling is always the thing
+# that trips first and the timeout is never reached. ${#command} is a BYTE count
+# here only because of the `export LC_ALL=C` at the top of this file; under a
+# UTF-8 locale it would count characters and a multibyte command could undercount
+# its way past the ceiling. Mirrors MAX_PAYLOAD_BYTES in
+# copilot/hooks/require-devcontainer.sh.
+if [ "${#command}" -gt 65536 ]; then
+  block "the Bash command is ${#command} bytes, over the 65536-byte (64 KB) ceiling this guard will inspect on the host. A command that large risks running the guard past its hook timeout, and a timed-out hook does not block -- so it is refused here instead. Split it into smaller commands, or run it inside the container."
+fi
 
 # Fold newlines to spaces for the two text passes below, exactly as
 # block-pr-merge.sh does and for the same reason: grep is line-oriented, so a real
@@ -189,7 +275,20 @@ while IFS= read -r segment; do
 
   find)
     # find is a read tool until it isn't: -exec/-delete make it arbitrary.
-    if printf '%s' "$segment" | grep -qE '(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprintf|fls)([[:space:]]|$)'; then
+    # Bash-native `[[ =~ ]]`, NOT `printf ... | grep`: a subprocess in this arm
+    # runs once PER SEGMENT -- roughly 1000x the cost of the allowlist arms --
+    # and a single Bash call chaining thousands of `find` segments while still
+    # under the 64 KiB ceiling could burn the entire 30s pinned hook budget on
+    # fork/exec before the loop ever reaches a dangerous tail segment. A
+    # timed-out PreToolUse hook does NOT block, so that is a fail-open, and the
+    # ceiling does not bound it. `[[ =~ ]]` forks nothing. The pattern is held
+    # in a variable and the RHS left UNQUOTED so it is parsed as an ERE (a
+    # quoted RHS matches literally and would silently neuter the check); it is
+    # byte-for-byte the same ERE, character classes included, that `grep -E`
+    # used. As the condition of an `if` a non-match does not trip `set -e` /
+    # the ERR trap. It clobbers BASH_REMATCH, which nothing here reads.
+    find_mutating_re='(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprintf|fls)([[:space:]]|$)'
+    if [[ $segment =~ $find_mutating_re ]]; then
       block "find with -exec/-delete can mutate the tree"
     fi
     ;;
