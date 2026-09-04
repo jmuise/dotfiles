@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: packages
+  namespace: dotfiles
+  author: dotfiles maintainers
+  description: >-
+    Install OS packages from the repo's existing manifests (packages/apt.txt,
+    packages/Brewfile) plus profile-gated AI CLIs.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions: [all]
+    - name: Debian
+      versions: [all]
+    - name: MacOSX
+      versions: [all]
+
+# community.general provides the homebrew* modules used by the macOS branch.
+# It ships with the `ansible` package (pipx install --include-deps ansible);
+# listed here so `ansible-galaxy role install` / lint knows about it.
+collections:
+  - community.general
+
+dependencies: []

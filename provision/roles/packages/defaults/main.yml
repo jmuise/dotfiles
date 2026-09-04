@@ -1,0 +1,37 @@
+---
+# ── Source-of-truth manifests ────────────────────────────────────────────────
+# The role does NOT keep its own package lists. It reads the manifests that
+# already live at the repo root and that install.py / install.ps1 consume
+# today, so there is exactly one place to edit a package.
+#
+#   packages/apt.txt   -> Debian/Ubuntu (apt)          [verified on WSL]
+#   packages/Brewfile  -> macOS (Homebrew)             [written, UNVERIFIED]
+#   packages/winget.txt -> Windows (winget)            [Phase 3, not built]
+#
+# playbook_dir is .../provision, so the repo root is one level up.
+packages_repo_root: "{{ playbook_dir }}/.."
+packages_apt_manifest: "{{ packages_repo_root }}/packages/apt.txt"
+packages_brewfile: "{{ packages_repo_root }}/packages/Brewfile"
+
+# ── apt behaviour ────────────────────────────────────────────────────────────
+# Real provisioning runs need root to install and to refresh the apt cache.
+# Both are knobs so the play can be dry-run on a box without passwordless
+# sudo (see roles/packages/README.md -> "Verifying on WSL").
+packages_apt_become: true
+packages_apt_update_cache: true
+packages_apt_cache_valid_time: 3600
+
+# Packages listed in apt.txt that this particular machine deliberately gets
+# from somewhere else (e.g. nodejs/npm via nvm rather than apt). Empty by
+# default: the manifest is the source of truth and drift should be visible,
+# not silently masked. Set per-host in inventory when a divergence is
+# intentional and permanent.
+packages_apt_exclude: []
+
+# ── AI CLI pins ──────────────────────────────────────────────────────────────
+# Kept in lockstep with the constants at the top of install.py.
+packages_copilot_cli_version: "1.0.80"
+
+# Claude Code has no pinned version in install.py (it self-updates from the
+# tarball installer); the role only ensures it is present.
+packages_claude_installer_url: "https://claude.ai/install.sh"

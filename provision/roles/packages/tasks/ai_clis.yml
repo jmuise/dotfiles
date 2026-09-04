@@ -1,0 +1,37 @@
+---
+# Only imported when want_ai_clis is true (profile >= inline; the fact is set
+# in ../../../site.yml from the shared reader profile/profile.py). Under
+# profile=bare this file never runs, which is the whole point of the nesting:
+# bare ⊂ inline ⊂ agentic.
+#
+# Mirrors the two AI CLIs install.py installs on Linux:
+#   claude   -> official tarball installer (self-updating, unpinned upstream)
+#   copilot  -> npm global @github/copilot, version-pinned
+#
+# Kilo Code would slot in here the same way (npm global @kilocode/cli); it is
+# left out of this spike because the brief scopes AI CLIs to claude + copilot.
+
+- name: Check whether Claude Code is already on PATH
+  ansible.builtin.command: sh -c 'command -v claude'
+  register: _packages_claude_present
+  changed_when: false
+  failed_when: false
+  check_mode: false # read-only probe; safe to run during --check
+
+- name: Install Claude Code via the official installer
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    curl -fsSL {{ packages_claude_installer_url | quote }} | bash
+  args:
+    executable: /bin/bash
+  when: _packages_claude_present.rc != 0
+  # This task only runs when `claude` is absent, so running it is itself the
+  # change. (command/shell are skipped under --check regardless.)
+  changed_when: true
+
+- name: Ensure GitHub Copilot CLI is installed (npm global, pinned)
+  community.general.npm:
+    name: "@github/copilot"
+    version: "{{ packages_copilot_cli_version }}"
+    global: true
+    state: present

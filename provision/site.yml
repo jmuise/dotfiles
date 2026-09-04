@@ -1,0 +1,104 @@
+---
+# Layer 1 entry point: machine state via Ansible.
+#
+#   ansible-playbook site.yml                     # profile from the shared file
+#   ansible-playbook site.yml -e profile=bare     # explicit override
+#   ansible-playbook site.yml -e profile=inline
+#   ansible-playbook site.yml -e profile=agentic
+#
+# Always safe to dry-run first:
+#
+#   ansible-playbook site.yml --check --diff
+#
+# The profile itself (bare ⊂ inline ⊂ agentic, the rank order, the "file
+# absent ⇒ agentic" default, and every validation rule) is defined once, in
+# profile/ at the repo root (PR #53). This play does not parse the profile
+# file — it shells out to the shared reader exactly as profile/README.md
+# documents for Ansible:
+#
+#   * `python3 profile/profile.py`               -> resolved name on stdout
+#   * `python3 profile/profile.py --at-least X`  -> rc 0/1 gate, rc 2 = broken
+#
+# An explicit `-e profile=<tier>` wins over the file; anything else is read
+# from the file. An invalid value (in the file, or passed with -e) fails the
+# play here, loudly, before any package work happens.
+#
+# This spike wires up exactly one role (`packages`). Later layers/roles
+# (shell, git config, editor, secrets plumbing) hang off this same play.
+
+- name: Provision machine state
+  hosts: all
+  gather_facts: true
+
+  vars:
+    # Repo root: playbook_dir is .../provision, the shared reader is one level
+    # up under profile/. Matches roles/packages/defaults/main.yml.
+    dotfiles_dir: "{{ playbook_dir }}/.."
+    # `profile` is intentionally NOT defaulted. Undefined  -> read the shared
+    # file (contract default when the file is absent: agentic). Defined via
+    # `-e profile=<tier>` -> that value wins.
+
+  pre_tasks:
+    - name: Resolve the active profile from the shared reader (no -e override)
+      ansible.builtin.command:
+        cmd: python3 {{ dotfiles_dir }}/profile/profile.py
+      register: _dotfiles_profile_read
+      changed_when: false
+      failed_when: _dotfiles_profile_read.rc != 0
+      check_mode: false # read-only: the reader only reads the profile file
+      when: profile is not defined
+
+    - name: Validate an explicit -e profile= override via the shared reader
+      # `--at-least <name>` exits 2 on an unknown profile name, which is how a
+      # typo in `-e profile=` is surfaced without re-encoding the profile list
+      # here. rc 0/1 (override is a real tier) both pass. XDG_CONFIG_HOME is
+      # pointed at a guaranteed-absent path so the reader resolves the "file"
+      # to the default and this task validates *only* the -e token -- an
+      # explicit override must not be held hostage to a broken on-disk file.
+      ansible.builtin.command:
+        cmd: python3 {{ dotfiles_dir }}/profile/profile.py --at-least {{ profile }}
+      environment:
+        XDG_CONFIG_HOME: /nonexistent
+      register: _dotfiles_profile_override_check
+      changed_when: false
+      failed_when: _dotfiles_profile_override_check.rc == 2
+      check_mode: false # read-only name check via the shared reader
+      when: profile is defined
+
+    - name: Record the resolved profile (from the shared reader)
+      ansible.builtin.set_fact:
+        dotfiles_profile: "{{ _dotfiles_profile_read.stdout | trim }}"
+      when: profile is not defined
+
+    - name: Record the resolved profile (from the -e profile= override)
+      ansible.builtin.set_fact:
+        dotfiles_profile: "{{ profile }}"
+      when: profile is defined
+
+    - name: Announce the resolved profile
+      ansible.builtin.debug:
+        msg: "profile = {{ dotfiles_profile }}"
+
+    - name: Decide whether AI CLIs are in scope (reader gate, no -e override)
+      # 0 = at least inline, 1 = below inline, 2 = broken profile file.
+      ansible.builtin.command:
+        cmd: python3 {{ dotfiles_dir }}/profile/profile.py --at-least inline
+      register: _dotfiles_profile_at_least_inline
+      changed_when: false
+      failed_when: _dotfiles_profile_at_least_inline.rc == 2
+      check_mode: false # read-only gate query via the shared reader
+      when: profile is not defined
+
+    - name: Set want_ai_clis from the reader gate
+      ansible.builtin.set_fact:
+        want_ai_clis: "{{ _dotfiles_profile_at_least_inline.rc == 0 }}"
+      when: profile is not defined
+
+    - name: Set want_ai_clis from the -e profile= override
+      # AI CLIs come in at inline and above; bare is the only tier without them.
+      ansible.builtin.set_fact:
+        want_ai_clis: "{{ dotfiles_profile in ['inline', 'agentic'] }}"
+      when: profile is defined
+
+  roles:
+    - role: packages
