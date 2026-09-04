@@ -84,31 +84,57 @@ _dotfiles_normalize_win_path() {
 
 UNAME_S="$(uname -s)"
 
-# pwd -P (not plain pwd) so a symlinked path to this checkout doesn't cause a
+# DOTFILES_DIR is the WORKING TREE this hook is firing for — the tree whose
+# content is about to be linked into $HOME — NOT the location of this hook
+# script. Those two diverge: core.hooksPath can be relative ("hooks"), in
+# which case `$(dirname "$0")/..` resolves against the git process's current
+# working directory, not the tree being operated on. Authenticating the
+# script's own location instead of the tree is the defect behind issue #54:
+# the receipt comparison passed on the wrong directory and an install fired
+# for a git operation on an unrelated tree.
+#
+# `git rev-parse --show-toplevel` is evaluated against the repo git is acting
+# on (git chdirs to the work-tree root before running hooks), so it names the
+# right tree regardless of how core.hooksPath is written or where git was run
+# from.
+#
+# Fail closed: if the toplevel can't be determined (git missing, bare repo,
+# not a work tree) skip rather than guess — never fall through to the
+# installer on an unverified path. `set -e` is in force, so `|| true` keeps a
+# non-zero git exit from aborting mid-guard.
+DOTFILES_DIR="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$DOTFILES_DIR" ]; then
+  echo "dotfiles: could not determine the working tree (git rev-parse --show-toplevel failed) — skipping hook-triggered install (fail closed)"
+  exit 0
+fi
+# pwd -P (not plain pwd) so a symlinked path to the work tree doesn't cause a
 # false mismatch against the physically-resolved path install.py recorded.
-DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
+# Fail closed if the directory can't be entered.
+DOTFILES_DIR="$(cd "$DOTFILES_DIR" 2>/dev/null && pwd -P || true)"
+if [ -z "$DOTFILES_DIR" ]; then
+  echo "dotfiles: could not resolve the working tree toplevel path — skipping hook-triggered install (fail closed)"
+  exit 0
+fi
 
 # Canonical-install-receipt guard — must run before the uname case below so it
 # covers Windows/MINGW too, not just the Unix branch.
 #
 # A `git worktree add` shares the primary checkout's .git/config, including
-# core.hooksPath=hooks; since `hooks` is a relative path, it resolves inside
-# whichever checkout this hook actually fires from. Left unguarded, a branch
-# switch inside a brand-new, possibly-unreviewed worktree installs that
-# worktree's content into the real $HOME. Same story for
-# `git clone -c core.hooksPath=hooks <repo> <dir>`, which persists the setting
-# into a fresh clone and fires on its own first checkout.
+# core.hooksPath; a branch switch inside a brand-new, possibly-unreviewed
+# worktree would otherwise install that worktree's content into the real
+# $HOME. Same story for `git clone -c core.hooksPath=... <repo> <dir>`, which
+# persists the setting into a fresh clone and fires on its own first checkout.
 #
 # The guard: only run when $HOME already holds a receipt (written by a
-# deliberate install.sh/install.py run — see install.py) naming *this*
-# checkout as the one it was installed from. No receipt, or a receipt naming
-# a different checkout, is a silent no-op: a machine that has never had a
+# deliberate install.sh/install.py run — see install.py) naming *this* working
+# tree as the one it was installed from. No receipt, or a receipt naming a
+# different checkout, is a silent no-op: a machine that has never had a
 # deliberate install must never get one from an incidental git operation. A
 # checkout that's been legitimately relocated re-arms itself by re-running
 # `bash install.sh` by hand, which rewrites the receipt to the new path.
 RECEIPT="$HOME/.local/state/dotfiles/install-root"
 if [ ! -f "$RECEIPT" ]; then
-  echo "dotfiles: no install receipt at $RECEIPT for checkout $DOTFILES_DIR — skipping hook-triggered install (this \$HOME has never had a deliberate install)"
+  echo "dotfiles: no install receipt at $RECEIPT for working tree $DOTFILES_DIR — skipping hook-triggered install (this \$HOME has never had a deliberate install)"
   exit 0
 fi
 RECORDED_DIR="$(cat "$RECEIPT" 2>/dev/null || true)"
@@ -116,8 +142,8 @@ RECORDED_DIR="$(cat "$RECEIPT" 2>/dev/null || true)"
 # See _dotfiles_normalize_win_path above: on Windows, normalize both sides to
 # one canonical, case-folded form before comparing so a receipt written by
 # native Windows Python (Win32 form) still matches this MSYS shell's own
-# POSIX-form DOTFILES_DIR. Fail closed (skip) if normalization can't be done
-# for either side -- never fall through and run the installer on an
+# POSIX-form working-tree path. Fail closed (skip) if normalization can't be
+# done for either side -- never fall through and run the installer on an
 # unverified match. Elsewhere, compare the raw strings exactly as before.
 case "$UNAME_S" in
   MINGW*|MSYS*)
@@ -126,7 +152,7 @@ case "$UNAME_S" in
       exit 0
     fi
     if ! CMP_DOTFILES="$(_dotfiles_normalize_win_path "$DOTFILES_DIR")"; then
-      echo "dotfiles: could not normalize checkout path '$DOTFILES_DIR' for comparison — skipping hook-triggered install (fail closed)"
+      echo "dotfiles: could not normalize working-tree path '$DOTFILES_DIR' for comparison — skipping hook-triggered install (fail closed)"
       exit 0
     fi
     ;;
@@ -137,7 +163,7 @@ case "$UNAME_S" in
 esac
 
 if [ "$CMP_RECORDED" != "$CMP_DOTFILES" ]; then
-  echo "dotfiles: install receipt points at '$RECORDED_DIR', this checkout is '$DOTFILES_DIR' — skipping hook-triggered install (run 'bash install.sh' here by hand to re-arm)"
+  echo "dotfiles: install receipt points at '$RECORDED_DIR', but this git operation is on working tree '$DOTFILES_DIR' — skipping hook-triggered install (run 'bash install.sh' in the intended checkout by hand to re-arm)"
   exit 0
 fi
 

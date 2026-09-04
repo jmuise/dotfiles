@@ -251,14 +251,23 @@ if not is_devcontainer() and not is_windows and shutil.which("gh"):
                      "Run 'git config --get credential.helper' to check. See secrets/README.md.")
 
 # ── git hooks ─────────────────────────────────────────────────────────────────
+# core.hooksPath is written as the ABSOLUTE path of this checkout's hooks/
+# dir, never the bare relative "hooks". A relative value resolves against the
+# git process's current working directory, so a git operation on a linked
+# worktree (which shares this .git/config) can make the hook fire out of
+# whichever tree git happened to run from — the defect behind issue #54. An
+# absolute path pins the hook to the checkout that installed it.
+# hooks/_dispatch.sh still validates the working tree against the receipt
+# regardless of this; the absolute path is defence in depth.
+hooks_path = str(DOTFILES / "hooks")
 log("Git hooks...")
 if DRY_RUN:
-    print("  git config core.hooksPath hooks")
+    print(f"  git config core.hooksPath {hooks_path}")
 else:
-    subprocess.run(["git", "-C", str(DOTFILES), "config", "core.hooksPath", "hooks"], check=True)
+    subprocess.run(["git", "-C", str(DOTFILES), "config", "core.hooksPath", hooks_path], check=True)
     for h in (DOTFILES / "hooks").glob("*"):
         h.chmod(h.stat().st_mode | 0o111)
-    success("core.hooksPath -> hooks")
+    success(f"core.hooksPath -> {hooks_path}")
 
 existing_global_hooks = run("git", "config", "--global", "--get", "core.hooksPath").stdout.strip()
 if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
