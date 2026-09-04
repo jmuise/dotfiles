@@ -1,24 +1,15 @@
 ---
 # ── Profiles ──────────────────────────────────────────────────────────────────
-# The three profiles are strictly nested: bare ⊂ inline ⊂ agentic.
+# The profile model (bare ⊂ inline ⊂ agentic, the rank table, the "file absent
+# ⇒ agentic" default, and all the validation) lives in ONE place: profile/ at
+# the repo root, merged via PR #53. See profile/README.md for the contract.
 #
-#   bare     minimal usable shell + CLI toolchain, no AI tooling
-#   inline   bare + AI CLIs (editor-adjacent / "inline" assistance)
-#   agentic  inline + everything needed to run agents locally
+# This playbook does NOT re-implement any of that. site.yml shells out to the
+# shared reader (`python3 profile/profile.py`) exactly as profile/README.md
+# documents for Ansible, and uses `profile/profile.py --at-least <tier>` for
+# the AI-CLI gating decision. The resolved value is published by site.yml as
+# the `dotfiles_profile` fact and the gate as the `want_ai_clis` fact.
 #
-# Because they nest, a role never asks "which profile exactly?" -- it asks
-# "is feature X in scope at or below the selected tier?". `profile_rank`
-# turns the name into an ordinal so `>=` comparisons work.
-profile: bare
-
-profile_ranks:
-  bare: 0
-  inline: 1
-  agentic: 2
-
-# .get() so an unknown profile resolves to -1 instead of raising, letting the
-# assert in site.yml report a clean error message.
-profile_rank: "{{ profile_ranks.get(profile, -1) }}"
-
-# Convenience predicate used by the packages role. AI CLIs come in at `inline`.
-want_ai_clis: "{{ profile_rank | int >= profile_ranks.inline }}"
+# There are deliberately no `profile`, `profile_ranks`, `profile_rank` or
+# `want_ai_clis` definitions here any more — a second parser is exactly what
+# PR #53 set out to prevent.

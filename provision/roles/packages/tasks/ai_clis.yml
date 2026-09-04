@@ -1,7 +1,8 @@
 ---
-# Only imported when want_ai_clis is true (profile >= inline; see
-# inventory/group_vars/all.yml). Under profile=bare this file never runs, which
-# is the whole point of the nesting: bare ⊂ inline ⊂ agentic.
+# Only imported when want_ai_clis is true (profile >= inline; the fact is set
+# in ../../../site.yml from the shared reader profile/profile.py). Under
+# profile=bare this file never runs, which is the whole point of the nesting:
+# bare ⊂ inline ⊂ agentic.
 #
 # Mirrors the two AI CLIs install.py installs on Linux:
 #   claude   -> official tarball installer (self-updating, unpinned upstream)

@@ -21,8 +21,8 @@ provision/
 ├── ansible.cfg              # local-only, single host, no vault yet
 ├── inventory/
 │   ├── hosts.yml            # one host: localhost, connection=local
-│   └── group_vars/all.yml   # profile definitions (bare ⊂ inline ⊂ agentic)
-├── site.yml                 # entry point; -e profile=<tier>
+│   └── group_vars/all.yml   # doc stub — the profile model lives in profile/
+├── site.yml                 # entry point; reads profile/, -e profile=<tier> overrides
 └── roles/
     └── packages/            # the spiked role
 ```
@@ -31,14 +31,22 @@ provision/
 
 ```sh
 # Dry run (always do this first):
+ansible-playbook site.yml --check --diff
+
+# Override the on-disk profile for a run:
 ansible-playbook site.yml -e profile=inline --check --diff
 
 # For real:
 ansible-playbook site.yml -e profile=agentic
 ```
 
-`profile` is required-ish: it defaults to `bare`, and an unknown value fails
-the play in `pre_tasks` before any package work happens.
+`profile` is **not** defined in this tree. With no `-e profile=`, `site.yml`
+shells out to the shared reader (`profile/profile.py`, PR #53), which reads
+`${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/profile` and resolves an **absent
+file to `agentic`** per `profile/README.md`. `-e profile=<tier>` overrides the
+file for that run. An unknown value — in the file or passed with `-e` — fails
+the play in `pre_tasks`, loudly, before any package work happens; the reader
+is the only validator (this play does not re-implement the rules).
 
 ### Profiles
 
