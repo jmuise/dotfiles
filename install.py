@@ -39,6 +39,25 @@ COPILOT_CLI_VERSION = "1.0.80"
 # `npm view @devcontainers/cli version` and updating this constant.
 DEVCONTAINERS_CLI_VERSION = "0.89.0"
 
+# rtk (Rust Token Killer) — installed from the project's own release script.
+# Trust model, strongest link first:
+#   * RTK_INSTALLER_SHA pins install.sh to an immutable commit (a git *tag*
+#     like v0.47.0 is mutable and re-resolved on every fetch — a moved tag
+#     would feed arbitrary script straight into `sh`). Reviewed install.sh
+#     sha256: d6eb73a772903e13ff34ee1be8a8b24e896ba9a978f20d2279a08b4083ea6f77
+#   * That pinned script downloads the rtk binary tarball for RTK_VERSION and
+#     verifies it against the release's checksums.txt before extracting
+#     (expected x86_64-unknown-linux-musl tarball sha256:
+#     7c0175d867f96c4f8f788479af82ca8f0990ea944226268834d224a525186fb7).
+#   * Residual risk: a compromised release could ship a matching tarball +
+#     checksums. Accepted here — this is already stricter than the repo's
+#     other `curl | sh` installs (starship, Claude Code), which pin nothing.
+# Bump both together: pick the `vX.Y.Z` stable tag from
+# https://github.com/rtk-ai/rtk/releases/latest (not a `dev-*-rc` pre-release),
+# set RTK_INSTALLER_SHA to the commit it points at, and refresh the hashes above.
+RTK_VERSION = "v0.47.0"
+RTK_INSTALLER_SHA = "34fe2553192aef5f6ca19944cb52a272a5294c27"
+
 # ── args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--dry-run", action="store_true")
@@ -530,6 +549,36 @@ if not is_windows and not shutil.which("devcontainer"):
         else:
             warn(f"npm not found — skipping devcontainer CLI install. Run: npm install -g @devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}")
 
+# ── rtk (Rust Token Killer) ──────────────────────────────────────────────────
+# CLI proxy that filters/compresses command output before it reaches an agent's
+# context. Wired into Claude Code by claude/hooks/rtk-rewrite.sh (registered in
+# claude/settings.json), which transparently rewrites e.g. `git status` to
+# `rtk git status`. No apt/npm package — install from the project's own release
+# script (pinned to a commit via RTK_INSTALLER_SHA; it then downloads and
+# checksum-verifies the RTK_VERSION binary — see the constants block). Lands in
+# ~/.local/bin (already on PATH via shell/exports.sh). Not installed on Windows —
+# powershell/profile.ps1 forwards `rtk` into the WSL distro, same as `claude`.
+log("rtk (Rust Token Killer)...")
+_rtk_url = f"https://raw.githubusercontent.com/rtk-ai/rtk/{RTK_INSTALLER_SHA}/install.sh"
+_rtk_hint = f'curl -fsSL "{_rtk_url}" | RTK_VERSION={RTK_VERSION} sh'
+if not is_windows and not shutil.which("rtk"):
+    if DRY_RUN:
+        print(f"  would install rtk via: {_rtk_hint}")
+    elif shutil.which("curl"):
+        log("Installing rtk...")
+        # Download then run (not `curl | sh`): a failed download must not leave
+        # an empty stdin that `sh` exits 0 on, reporting a phantom success.
+        _r = subprocess.run(
+            f'_t=$(mktemp) && curl -fsSL "{_rtk_url}" -o "$_t" '
+            f'&& RTK_VERSION={RTK_VERSION} sh "$_t"; _rc=$?; rm -f "$_t"; exit $_rc',
+            shell=True, capture_output=True, text=True, timeout=180)
+        if _r.returncode == 0:
+            success("rtk installed")
+        else:
+            warn(f"rtk install skipped (installer error): {(_r.stderr or '').strip()[:200]}")
+    else:
+        warn(f"curl not found — skipping rtk install. Run: {_rtk_hint}")
+
 log("start-project (sp)...")
 link(DOTFILES / "tools" / "start-project.sh", HOME / ".local" / "bin" / "start-project")
 
@@ -588,6 +637,11 @@ link(DOTFILES / "claude" / "statusline-command.sh",  claude_dir / "statusline-co
 link(DOTFILES / "claude" / "agents",                 claude_dir / "agents")
 link(DOTFILES / "claude" / "hooks",                  claude_dir / "hooks")
 link(DOTFILES / "claude" / "skills",                 claude_dir / "skills")
+# rtk's command-rewrite hook (hooks/rtk-rewrite.sh) works with zero context
+# cost, so rtk-awareness.md is deliberately NOT pulled into CLAUDE.md. It's
+# linked here only so `@rtk-awareness.md` resolves on demand for the rtk meta
+# commands (`rtk gain`, `rtk discover`).
+link(DOTFILES / "claude" / "rtk-awareness.md",       claude_dir / "rtk-awareness.md")
 
 # ── Kilo Code ───────────────────────────────────────────────────────────────────
 # Same schema, same structure as the ~/.config/kilo/ directory Kilo itself
