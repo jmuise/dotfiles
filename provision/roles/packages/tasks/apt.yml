@@ -21,6 +21,26 @@
         | list
       }}
 
+- name: Fail if any apt manifest entry is not package-name shaped
+  # Entries go to ansible.builtin.apt as an argv list, not through a shell, so
+  # this is defence in depth: a line beginning with "-" (e.g. "-o", "--reinstall")
+  # would still be read by apt-get as an OPTION rather than a package name. Fail
+  # loudly and name the offender rather than silently dropping or passing it.
+  ansible.builtin.assert:
+    that:
+      - _packages_apt_malformed | length == 0
+    fail_msg: >-
+      packages/apt.txt has {{ _packages_apt_malformed | length }} entry/entries
+      that are not valid package names (each must match
+      '^[a-z0-9][a-z0-9+._-]*$'): {{ _packages_apt_malformed | join(', ') }}
+    success_msg: >-
+      All {{ packages_apt_wanted | length }} apt manifest entries are
+      package-name shaped.
+    quiet: true
+  vars:
+    _packages_apt_malformed: >-
+      {{ packages_apt_wanted | reject('match', '^[a-z0-9][a-z0-9+._-]*$') | list }}
+
 - name: Show the resolved apt package list
   ansible.builtin.debug:
     var: packages_apt_wanted
