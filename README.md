@@ -13,7 +13,7 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
 | `claude/` | Claude Code **global** config (`CLAUDE.md`, `settings.json`), plus `agents/` (the subagent roster, led by the `number-one` orchestrator), `skills/` (on-demand procedural knowledge, including the global-vs-project config-scoping convention and the vendored `caveman` output-compression skill), `hooks/` (`PreToolUse` guardrails blocking PR-merge/force-push and AI-attribution lines, the devcontainer guard the other two CLIs defer to, and `rtk-rewrite.sh` for token-saving command rewrites) and `rtk-awareness.md`. This directory is the source of truth the Kilo and Copilot config below borrows from rather than copies — see [Sharing the roster](#sharing-the-roster-with-kilo-and-copilot) |
 | `kilo/` | Kilo Code global config (`kilo.jsonc`, `tui.jsonc`), plus `plugin/` (a thin shim porting the devcontainer guard to Kilo) and `.kilo/agents/` (the `number-one` orchestrator subagent in Kilo's frontmatter format — the only one of the five ported so far, and Kilo gets no skills wiring at all). `AGENTS.md` is symlinked from `claude/CLAUDE.md` |
-| `copilot/` | GitHub Copilot CLI global config: `settings.json` (the `preToolUse` hook wiring plus `includeCoAuthoredBy: false`), `hooks/` (a shim porting the same devcontainer guard) and `agents/` (all five subagents, hand-translated into Copilot's `*.agent.md` schema). `copilot-instructions.md` and `skills/` are symlinked straight from `claude/CLAUDE.md` and `claude/skills/` — same pattern, same source of truth |
+| `copilot/` | GitHub Copilot CLI global config: `settings.json` (the `preToolUse` hook wiring plus `includeCoAuthoredBy: false`), `hooks/` (a shim porting the same devcontainer guard) and `agents/` (the subagent roster hand-translated into Copilot's `*.agent.md` schema — five agents, but not the same five: no provisioning agent, and `devcontainer-reviewer` stands in for the dev-env sign-off half of Claude's `chief-engineer`). `copilot-instructions.md` and `skills/` are symlinked straight from `claude/CLAUDE.md` and `claude/skills/` — same pattern, same source of truth |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.template` (rendered to `~/.ssh/config`, no keys) |
@@ -142,7 +142,7 @@ whichever one is driving. What actually crosses the tool boundary today:
 | Global instructions | `claude/CLAUDE.md` | the same file, symlinked as `~/.config/kilo/AGENTS.md` | the same file, symlinked as `~/.copilot/copilot-instructions.md` |
 | Devcontainer guard | `claude/hooks/require-devcontainer.sh` | `kilo/plugin/require-devcontainer.ts` (shim) | `copilot/hooks/require-devcontainer.sh` (shim) |
 | Skills | `claude/skills/` | none | the same directory, symlinked to `~/.copilot/skills` |
-| Subagents | all five | one (`number-one`) | all five, hand-translated |
+| Subagents | all five | one (`number-one`) | five, hand-translated — no provisioning agent, `devcontainer-reviewer` for sign-off review |
 | Never-merge enforcement | `block-pr-merge.sh` + a `permissions.deny` rule | `kilo.jsonc`'s `permission` deny rules | prose in the agent definition only |
 | No AI-attribution trailers | `block-ai-attribution.sh` | prose only | `"includeCoAuthoredBy": false` in `copilot/settings.json` (the CLI defaults this **on**) |
 
@@ -156,19 +156,23 @@ keeping agent work off the bare host.
 
 The gaps, none of them papered over:
 
-- **Neither port has the `chief-engineer` exemption, and under Copilot that
-  agent is therefore blocked.** Both shims hardcode an `agent_type` the guard
-  never treats as exempt, because neither tool's hook payload carries an agent
-  identity to key an exemption off — Copilot's is `sessionId`, `timestamp`,
-  `cwd`, `toolName`, `toolArgs` and nothing more. The practical consequence is
-  sharp: `copilot/agents/chief-engineer.agent.md` ships, but its `git init`
-  would succeed and every following `git add`/`git commit`/`docker build` would
-  be denied, leaving a half-initialized repo. So that file and
-  `copilot/agents/number-one.agent.md` both carry a prominent warning to run
-  provisioning under Claude Code instead — verified by invoking it, which
-  refuses and touches nothing. Its read-only sign-off review mode still works.
-  Whether Copilot ever gets a real provisioning path is a decision for you, not
-  a default a shim should assume.
+- **Neither port has the `chief-engineer` exemption, so the Copilot roster
+  ships no provisioning agent at all.** Both shims hardcode an `agent_type` the
+  guard never treats as exempt, because neither tool's hook payload carries an
+  agent identity to key an exemption off — Copilot's is `sessionId`,
+  `timestamp`, `cwd`, `toolName`, `toolArgs` and nothing more. Host bootstrap
+  necessarily runs before a container exists, so it needs that by-name
+  exemption; without one, a `git init` would succeed and every following `git
+  add`/`git commit`/`docker build` would be denied, leaving a half-initialized
+  repo. Rather than ship an agent that strands itself, there is no
+  `copilot/agents/chief-engineer.agent.md`: `copilot/agents/number-one.agent.md`
+  order 1 instead tells it to stop and report that host bootstrap runs under
+  Claude Code, whose guard does receive an agent identity and exempts
+  `chief-engineer` by name. The dev-environment *sign-off review* half of the
+  Claude role does survive as `copilot/agents/devcontainer-reviewer.agent.md`,
+  scoped to `read`/`grep`/`glob` with no `shell` or `edit` — enforcement by
+  tool grant, not by banner. Whether Copilot ever gets a real provisioning path
+  is a decision for you, not a default a shim should assume.
 - **`number-one`'s "NEVER MERGE" rule is only mechanically enforced under Claude
   Code and Kilo** — by the hook plus `permissions.deny` in the first case, and
   `kilo.jsonc`'s `permission` block in the second. Under Copilot it is prose in
@@ -719,7 +723,7 @@ dotfiles/
 │   │   └── require-devcontainer.sh  ← shim: defers to claude/hooks/require-devcontainer.sh
 │   └── agents/                 ← symlinked → ~/.copilot/agents (Copilot's *.agent.md schema)
 │       ├── number-one.agent.md
-│       ├── chief-engineer.agent.md
+│       ├── devcontainer-reviewer.agent.md  ← review-only; no provisioning agent under Copilot (see below)
 │       ├── security-officer.agent.md
 │       ├── implementation-engineer.agent.md
 │       └── duty-officer.agent.md
