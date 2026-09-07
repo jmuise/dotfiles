@@ -1,0 +1,18 @@
+---
+# Dispatch on OS family. Each branch reads the matching manifest from the repo
+# root; none of them re-list packages here.
+
+- name: Install apt packages (Debian / Ubuntu / WSL)
+  ansible.builtin.import_tasks: apt.yml
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install Homebrew packages (macOS)
+  ansible.builtin.import_tasks: homebrew.yml
+  when: ansible_facts['os_family'] == 'Darwin'
+
+# winget / Windows is Phase 3. packages/winget.txt is intentionally left
+# unconsumed here; see roles/packages/README.md.
+
+- name: Install profile-gated AI CLIs
+  ansible.builtin.import_tasks: ai_clis.yml
+  when: want_ai_clis | bool

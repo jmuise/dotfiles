@@ -1,0 +1,53 @@
+---
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  WRITTEN BUT UNVERIFIED ON macOS.                                        │
+# │  No Mac was reachable from the environment this role was spiked in, so   │
+# │  this branch has never actually run. Do not treat it as tested. The      │
+# │  first person with a Mac should dry-run `site.yml --check --diff` and    │
+# │  report back before this is trusted.                                     │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# community.general ships homebrew / homebrew_cask / homebrew_tap but NO
+# Brewfile-native module, so the role parses packages/Brewfile itself and
+# drives the three modules that do exist. (See provision/README.md ->
+# "Upstream-contribution candidates".)
+
+- name: Read the Brewfile (packages/Brewfile)
+  ansible.builtin.slurp:
+    src: "{{ packages_brewfile }}"
+  register: _packages_brewfile_raw
+
+- name: Decode the Brewfile
+  ansible.builtin.set_fact:
+    _packages_brew_text: "{{ _packages_brewfile_raw.content | b64decode }}"
+
+- name: Extract taps / formulae / casks from the Brewfile
+  ansible.builtin.set_fact:
+    packages_brew_taps: "{{ _packages_brew_text | regex_findall('(?m)^tap\\s+\"([^\"]+)\"') }}"
+    packages_brew_formulae: "{{ _packages_brew_text | regex_findall('(?m)^brew\\s+\"([^\"]+)\"') }}"
+    packages_brew_casks: "{{ _packages_brew_text | regex_findall('(?m)^cask\\s+\"([^\"]+)\"') }}"
+
+- name: Show what the Brewfile resolves to
+  ansible.builtin.debug:
+    msg:
+      taps: "{{ packages_brew_taps }}"
+      formulae: "{{ packages_brew_formulae }}"
+      casks: "{{ packages_brew_casks }}"
+
+- name: Ensure Homebrew taps from the Brewfile are present
+  community.general.homebrew_tap:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ packages_brew_taps }}"
+
+- name: Ensure Homebrew formulae from the Brewfile are present
+  community.general.homebrew:
+    name: "{{ packages_brew_formulae }}"
+    state: present
+  when: packages_brew_formulae | length > 0
+
+- name: Ensure Homebrew casks from the Brewfile are present
+  community.general.homebrew_cask:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ packages_brew_casks }}"
