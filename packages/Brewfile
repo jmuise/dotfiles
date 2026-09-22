@@ -35,6 +35,9 @@ brew "node"
 # install.py alongside Claude Code.
 # Install manually on macOS: npm install -g @kilocode/cli
 # Install manually on macOS: npm install -g @github/copilot
+# rtk (Rust Token Killer, token-saving CLI proxy) is installed by install.py
+# from its pinned release script (RTK_VERSION), on macOS and Linux alike.
+# Install manually on macOS: brew install rtk-ai/rtk/rtk
 
 # ── editor ────────────────────────────────────────────────────────────────────
 brew "neovim"

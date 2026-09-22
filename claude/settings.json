@@ -28,6 +28,11 @@
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/require-devcontainer.sh\"",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/rtk-rewrite.sh\"",
+            "timeout": 10
           }
         ]
       },

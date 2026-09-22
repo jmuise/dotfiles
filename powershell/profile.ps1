@@ -108,6 +108,17 @@ if (Test-Path "$env:SystemRoot\System32\wsl.exe") {
     $launch = 'PATH=$HOME/.local/bin:$HOME/bin:$PATH; if ! command -v copilot >/dev/null 2>&1 && [ -s $HOME/.nvm/nvm.sh ]; then . $HOME/.nvm/nvm.sh >/dev/null 2>&1; fi; command -v copilot >/dev/null 2>&1 || { echo copilot: GitHub Copilot CLI is not installed in the $WSL_DISTRO_NAME WSL distro. Install it there, then retry. 1>&2; exit 127; }; case $(command -v copilot) in /mnt/*) echo copilot: only a Windows copilot is visible from inside WSL - refusing to recurse. Install GitHub Copilot CLI in the distro. 1>&2; exit 127;; esac; exec copilot "$@"'
     & "$env:SystemRoot\System32\wsl.exe" -d $distro -e bash -lc $launch copilot @args
   }
+
+  # Same forwarding pattern as claude/kilo/copilot above — rtk (Rust Token
+  # Killer) is installed in the WSL distro by install.py, so type `rtk` in pwsh
+  # and it runs inside WSL. See the comment block above claude for the security
+  # rationale (wsl.exe is a real .exe, arguments are passed verbatim as argv, no
+  # cmd.exe re-parsing layer).
+  function rtk {
+    $distro = if ($env:RTK_WSL_DISTRO) { $env:RTK_WSL_DISTRO } else { "Debian" }
+    $launch = 'PATH=$HOME/.local/bin:$HOME/bin:$PATH; command -v rtk >/dev/null 2>&1 || { echo rtk: rtk is not installed in the $WSL_DISTRO_NAME WSL distro. Run install.py there, then retry. 1>&2; exit 127; }; case $(command -v rtk) in /mnt/*) echo rtk: only a Windows rtk is visible from inside WSL - refusing to recurse. Install rtk in the distro. 1>&2; exit 127;; esac; exec rtk "$@"'
+    & "$env:SystemRoot\System32\wsl.exe" -d $distro -e bash -lc $launch rtk @args
+  }
 }
 
 # ── prompt ────────────────────────────────────────────────────────────────────
