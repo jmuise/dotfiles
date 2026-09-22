@@ -167,6 +167,58 @@ if [ "$CMP_RECORDED" != "$CMP_DOTFILES" ]; then
   exit 0
 fi
 
+# Default-branch guard — the receipt check above only proves this IS the
+# canonical checkout; it does nothing about *which branch* is checked out.
+# In the canonical checkout the receipt legitimately equals --show-toplevel,
+# so without this the installer fires on ANY branch switch. install.py's
+# render() rewrites $HOME/.gitconfig and $HOME/.ssh/config unconditionally
+# (not only on content change), so a feature-branch checkout demonstrably
+# mutates the real home directory — and once installer behaviour starts
+# differing branch to branch that stops being benign. See issue #54.
+#
+# Policy: auto-sync only when HEAD is on the repo's default branch. A
+# deliberate `git checkout <default>` or a `git pull` on it still installs;
+# checking out a feature branch to inspect it does not.
+#
+# "Default branch" is derived dynamically from refs/remotes/origin/HEAD
+# (origin/main -> main), never hardcoded to "main" — hardcoding is brittle
+# across forks and branch renames. Older clones (the canonical checkout is
+# one) never recorded origin/HEAD locally; a one-shot `git remote set-head
+# origin --auto` repairs and persists it, so the network round-trip happens
+# at most once. If it still can't be resolved (offline, no origin), fail
+# closed and skip — never guess.
+#
+# A detached HEAD has no current branch: `git symbolic-ref --short HEAD`
+# fails, which falls through to the same skip. That is the intended
+# behaviour — a detached HEAD is an inspect/bisect/CI state, never the
+# "sync my dotfiles" case.
+#
+# Shared by post-checkout, post-merge and post-rewrite: the same gate is
+# correct for all three. `git pull` on the default branch (which rewrites
+# commits here, since this repo sets pull.rebase=true, firing post-rewrite)
+# still installs; a rebase or amend while on a feature branch does not.
+DEFAULT_REF="$(git -C "$DOTFILES_DIR" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+if [ -z "$DEFAULT_REF" ]; then
+  GIT_TERMINAL_PROMPT=0 git -C "$DOTFILES_DIR" remote set-head origin --auto >/dev/null 2>&1 || true
+  DEFAULT_REF="$(git -C "$DOTFILES_DIR" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+fi
+DEFAULT_BRANCH="${DEFAULT_REF#refs/remotes/origin/}"
+if [ -z "$DEFAULT_BRANCH" ]; then
+  echo "dotfiles: could not determine the default branch — refs/remotes/origin/HEAD is unset and 'git remote set-head origin --auto' could not repair it — skipping hook-triggered install (fail closed; run 'git remote set-head origin --auto' here, then 'bash install.sh' by hand to re-arm)"
+  exit 0
+fi
+
+CURRENT_BRANCH="$(git -C "$DOTFILES_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+if [ -z "$CURRENT_BRANCH" ]; then
+  echo "dotfiles: this git operation is on a detached HEAD, not the default branch '$DEFAULT_BRANCH' — skipping hook-triggered install (only the default branch auto-syncs \$HOME)"
+  exit 0
+fi
+
+if [ "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]; then
+  echo "dotfiles: this git operation is on branch '$CURRENT_BRANCH', not the default branch '$DEFAULT_BRANCH' — skipping hook-triggered install (only the default branch auto-syncs \$HOME; run 'bash install.sh' here by hand if you meant to)"
+  exit 0
+fi
+
 case "$UNAME_S" in
   MINGW*|MSYS*)
     command -v pwsh >/dev/null 2>&1 && pwsh -NoLogo -NoProfile -File "$DOTFILES_DIR/install.ps1" -SkipWSL
