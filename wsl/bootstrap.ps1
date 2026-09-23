@@ -17,7 +17,16 @@
 # succeeded — runs install.sh in the same WSL checkout bootstrap.sh just
 # cloned/updated, so a Windows install still ends with dotfiles symlinked.
 
-param([string]$DotfilesDir, [string]$DotfilesProfile, [switch]$DryRun)
+# -DotfilesProfile: allow-listed via ValidateSet, not free text. This value is
+# forwarded to bootstrap.sh's --profile inside a wsl.exe call below, and
+# wsl.exe re-joins and re-parses its argument list through the WSL default
+# shell internally (see the ConvertTo-WslPath / bridge-gcm comments further
+# down for the same behavior biting embedded spaces) — so an unvalidated
+# value like 'agentic; curl ... | bash #' could run as a separate command
+# inside WSL before bootstrap.sh's own --profile validation ever sees it.
+# '' is included because this parameter is optional and empty is its unset
+# default (bootstrap.sh resolves the profile itself in that case).
+param([string]$DotfilesDir, [ValidateSet('', 'bare', 'inline', 'agentic')][string]$DotfilesProfile, [switch]$DryRun)
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\detect-state.ps1"
@@ -107,6 +116,17 @@ if ($gitCmd) {
 $wslHome = (wsl.exe -d Debian -- bash -c 'printf %s "$HOME"')
 $wslBootstrapDest = "$($wslHome.Trim())/dotfiles"
 
+# $wslBootstrapDest is derived from WSL's own $HOME output (a subprocess
+# result, not a literal), and it is about to cross into wsl.exe's argument
+# list. wsl.exe re-joins and re-parses its arguments through the WSL default
+# shell internally, so anything other than a plain absolute POSIX path here —
+# whitespace, quotes, $(), ;, |, &, backticks — could be interpreted as shell
+# syntax on the other side rather than a path. Validate before it is used for
+# anything, and fail loudly rather than pass through something unexpected.
+if ($wslBootstrapDest -notmatch '^/[A-Za-z0-9._/-]+$') {
+  throw "Refusing to continue: WSL \$HOME resolved to an unsafe destination path '$wslBootstrapDest' (expected a plain absolute path with no whitespace or shell metacharacters). Aborting rather than passing this to wsl.exe."
+}
+
 log "Running bootstrap/bootstrap.sh inside WSL..."
 # Invoked as a script file with separate arguments, not an inline `bash -lc
 # "..."` string, for the same reason as the (now-removed) apt-install call
@@ -115,7 +135,17 @@ log "Running bootstrap/bootstrap.sh inside WSL..."
 # own `cd` into provision/ before running ansible-playbook, so no `cd` is
 # needed here.
 $bootstrapArgs = @("--dest", $wslBootstrapDest)
-if ($DotfilesProfile) { $bootstrapArgs += @("--profile", $DotfilesProfile) }
+if ($DotfilesProfile) {
+  # Belt-and-braces re-check right at the point this value is threaded into
+  # the wsl.exe argument list, in addition to the ValidateSet on the
+  # parameter above — this is the actual security boundary, so it should not
+  # rely solely on validation attributes staying attached to the parameter
+  # declaration.
+  if ($DotfilesProfile -notin @('bare', 'inline', 'agentic')) {
+    throw "Refusing to continue: -DotfilesProfile '$DotfilesProfile' is not one of bare, inline, agentic."
+  }
+  $bootstrapArgs += @("--profile", $DotfilesProfile)
+}
 wsl.exe -d Debian -- bash "$wslDotfiles/bootstrap/bootstrap.sh" @bootstrapArgs
 if ($LASTEXITCODE -ne 0) {
   warn "bootstrap.sh failed (exit $LASTEXITCODE) - aborting; install.sh was NOT run, so dotfiles are not symlinked. Fix the error above, then re-run install.ps1."

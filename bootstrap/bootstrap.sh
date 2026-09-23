@@ -160,17 +160,17 @@ clone_into() {
   local dry_run="$1" repo="$2" ref="$3" dest="$4"
   if [ "$dry_run" -eq 1 ]; then
     if [ -n "$ref" ]; then
-      log "[dry-run] would run: git clone --branch $ref $repo $dest"
+      log "[dry-run] would run: git clone --branch $ref -- $repo $dest"
     else
-      log "[dry-run] would run: git clone $repo $dest"
+      log "[dry-run] would run: git clone -- $repo $dest"
     fi
     return 0
   fi
   log "cloning $repo -> $dest"
   if [ -n "$ref" ]; then
-    git clone --branch "$ref" "$repo" "$dest"
+    git clone --branch "$ref" -- "$repo" "$dest"
   else
-    git clone "$repo" "$dest"
+    git clone -- "$repo" "$dest"
   fi
 }
 
@@ -231,8 +231,39 @@ sync_existing_clone() {
   git -C "$dest" pull --ff-only origin "$expected_branch"
 }
 
+# Refuse to touch $dest if it, or any ancestor between it and $HOME
+# (inclusive), is a symlink. This is a *write* path -- cloning an entire repo
+# through an attacker-controlled symlinked ancestor is worse than the
+# inconvenience of refusing to run, so unlike profile.sh's read-only symlink
+# check (issue #29, warn-and-continue), this errors instead of warning and
+# carrying on. Only walks the ancestry when $dest is actually under $HOME;
+# outside $HOME there is no fixed stopping point to assert without more
+# context, so it is left alone.
+check_dest_symlinks() {
+  local dest="$1" home dir parent
+  home="${HOME%/}"
+  dest="${dest%/}"
+
+  case "$dest" in
+    "$home"|"$home"/*) : ;;
+    *) return 0 ;;
+  esac
+
+  dir="$dest"
+  while : ; do
+    if [ -L "$dir" ]; then
+      die "$dir is a symlink -- refusing to clone into a symlinked destination or through a symlinked ancestor (it could redirect where the clone actually lands)"
+    fi
+    [ "$dir" = "$home" ] && break
+    parent=$(dirname -- "$dir")
+    [ "$parent" = "$dir" ] && break
+    dir="$parent"
+  done
+}
+
 sync_repo() {
   local dry_run="$1" repo="$2" ref="$3" dest="$4"
+  check_dest_symlinks "$dest"
   if [ -d "$dest/.git" ]; then
     sync_existing_clone "$dry_run" "$repo" "$ref" "$dest"
   elif [ -e "$dest" ]; then
@@ -317,6 +348,20 @@ main() {
       *) die "invalid --profile '$profile' — must be one of: bare, inline, agentic" ;;
     esac
   fi
+
+  # A value starting with '-' looks like an option, not a value (e.g.
+  # --repo --upload-pack=x, or --dest -x), and a downstream `git clone` / `ls`
+  # / `cd` could otherwise parse it as a flag instead of a plain argument.
+  # Reject up front rather than relying on every callsite to defend itself.
+  case "$repo" in
+    -*) die "--repo value must not start with '-' (looks like an option, not a value): '$repo'" ;;
+  esac
+  case "$dest" in
+    -*) die "--dest value must not start with '-' (looks like an option, not a value): '$dest'" ;;
+  esac
+  case "$ref" in
+    -*) die "--ref value must not start with '-' (looks like an option, not a value): '$ref'" ;;
+  esac
 
   if [ "$dry_run" -eq 1 ]; then
     log "DRY RUN — no changes will be made; ansible will still run --check --diff if it is already installed"

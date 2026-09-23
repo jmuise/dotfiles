@@ -15,7 +15,15 @@
 # with a parameter literally named Profile). Forwarded to bootstrap/bootstrap.sh
 # inside WSL as --profile; left empty, bootstrap.sh resolves it itself from
 # profile/profile.sh once it has cloned the repo (absent file -> agentic).
-param([switch]$DryRun, [switch]$SkipWSL, [string]$DotfilesProfile)
+#
+# ValidateSet (rather than trusting bootstrap.sh's own --profile check) so an
+# invalid value is rejected here, in PowerShell, before it ever reaches
+# wsl.exe. wsl.exe re-joins and re-parses its argument list through the WSL
+# default shell internally (see wsl/bootstrap.ps1), so a value like
+# 'agentic; curl ... | bash' could otherwise run as a second command inside
+# WSL before bootstrap.sh's own validation ever sees it. '' is included
+# because this parameter is optional and empty is its unset default.
+param([switch]$DryRun, [switch]$SkipWSL, [ValidateSet('', 'bare', 'inline', 'agentic')][string]$DotfilesProfile)
 
 $ErrorActionPreference = "Stop"
 $DOTFILES = Split-Path -Parent $MyInvocation.MyCommand.Path
