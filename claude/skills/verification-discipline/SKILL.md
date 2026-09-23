@@ -19,6 +19,10 @@ A green check is only worth what it actually measures. Building an image is not 
 
 A suite that passes on the wrong interpreter or the wrong package manager version tells you very little; the mismatch usually surfaces in CI or on someone else's machine instead. Read the declared versions first (`.python-version`, `pyproject.toml`'s `requires-python`, `packageManager` in `package.json`, `engines`, the CI workflow's setup steps) and match them — provision a throwaway environment rather than testing on whatever the host happens to have and calling it verified. Prefer the project's own container (`.devcontainer/`, `compose.yaml`) where one exists: it gets you the right toolchain by construction and matches what CI does. If you had to hand-provision something to run a standard gate, that's itself a finding worth reporting, not just a step you quietly did.
 
+## Measure the adversarial path, not the convenient one
+
+When a change adds a limit, a guard, or a fast path, the input that exercises it hardest is rarely the obvious one. A size ceiling is not tested by a wildly oversized payload — that trips the ceiling and returns instantly. It is tested by a payload sized *just under* the ceiling with an expensive tail, which is the input that rides the slow path all the way to the timeout. A cache is not proven by a cache hit; a retry loop is not proven by the call that succeeds first try. Pick the input that makes the new code do the most work while still being accepted, and measure that. A green check on the easy case says nothing about where the change actually fails.
+
 ## A skipped check is not a passed check
 
 Hook chains and CI jobs routinely self-skip when a path filter doesn't match, and in the output that looks almost identical to success. Before reporting a gate as green, confirm it actually executed against your change. If it skipped, say so, and run the underlying command by hand if the thing it guards is load-bearing for the task.
