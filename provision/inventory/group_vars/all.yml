@@ -1,0 +1,15 @@
+---
+# ── Profiles ──────────────────────────────────────────────────────────────────
+# The profile model (bare ⊂ inline ⊂ agentic, the rank table, the "file absent
+# ⇒ agentic" default, and all the validation) lives in ONE place: profile/ at
+# the repo root, merged via PR #53. See profile/README.md for the contract.
+#
+# This playbook does NOT re-implement any of that. site.yml shells out to the
+# shared reader (`python3 profile/profile.py`) exactly as profile/README.md
+# documents for Ansible, and uses `profile/profile.py --at-least <tier>` for
+# the AI-CLI gating decision. The resolved value is published by site.yml as
+# the `dotfiles_profile` fact and the gate as the `want_ai_clis` fact.
+#
+# There are deliberately no `profile`, `profile_ranks`, `profile_rank` or
+# `want_ai_clis` definitions here any more — a second parser is exactly what
+# PR #53 set out to prevent.
