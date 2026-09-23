@@ -14,6 +14,14 @@
   "editor.smoothScrolling": true,
   "editor.bracketPairColorization.enabled": true,
   "editor.guides.bracketPairs": "active",
+  // NOT profile-gated (issue #71): this repo's AI-capability profile
+  // (bare/inline/agentic, profile/README.md) does not yet reach this file --
+  // install.py links vscode/settings.json unconditionally on every profile,
+  // unlike ~/.claude, ~/.config/kilo, ~/.copilot. `bare` should disable
+  // Copilot's inline suggestions the way nvim/lua/plugins/copilot.lua now
+  // does for nvim (#40); doing the same here needs a profile-aware
+  // render/merge step for this one Copilot-specific setting, not a bare
+  // reuse of the existing link()/apply_gated_links() model -- see #71.
   "editor.inlineSuggest.enabled": true,
   "editor.formatOnSave": true,
   "editor.formatOnPaste": false,
