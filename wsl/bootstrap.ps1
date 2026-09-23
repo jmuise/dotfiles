@@ -1,12 +1,22 @@
 # bootstrap.ps1 - provisions WSL Debian as the primary Windows dev shell.
 # Called from install.ps1 unless -SkipWSL is passed.
 #
-# State machine (see detect-state.ps1): root-level provisioning (apt install)
-# never needs the human-facing first-run wizard, but install.sh and the
+# State machine (see detect-state.ps1): root-level provisioning never needs
+# the human-facing first-run wizard, but bootstrap/bootstrap.sh and the
 # gitconfig migration need the real default user's $HOME, so those only run
 # once the distro is fully Ready.
+#
+# Package installs (packages/apt.txt) and the Layer 2 dotfiles symlinking
+# (install.sh) used to happen from here directly. They are now Layer 0/1's
+# job: bootstrap/bootstrap.sh installs its own prerequisites and hands off to
+# `ansible-playbook provision/site.yml`, which reads packages/apt.txt itself
+# (provision/roles/packages). bootstrap.sh deliberately does not run
+# install.sh (Layer 2) — see bootstrap/README.md; that wiring is a later
+# phase (dotfiles issue #47), so a WSL/Windows box bootstrapped via this path
+# does not get its dotfiles symlinked automatically yet. Run `./install.sh`
+# by hand inside the WSL checkout bootstrap.sh creates until then.
 
-param([string]$DotfilesDir, [switch]$DryRun)
+param([string]$DotfilesDir, [string]$DotfilesProfile, [switch]$DryRun)
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\detect-state.ps1"
@@ -51,29 +61,12 @@ switch ($state) {
 
 # state -eq "Ready" from here on
 if ($DryRun) {
-  Write-Host "  would install packages/apt.txt, migrate gitconfig credential, bridge WSL git credentials to Windows Credential Manager, and run install.sh in Debian"
+  Write-Host "  would migrate gitconfig credential, bridge WSL git credentials to Windows Credential Manager, and invoke bootstrap/bootstrap.sh in Debian"
   return
 }
 
 $wslDotfiles = ConvertTo-WslPath $DotfilesDir
 $wslWindowsGitconfigLocal = ConvertTo-WslPath "$HOME\.gitconfig.local"
-
-log "Installing apt packages in Debian..."
-# Invoked as a script file, not an inline `bash -lc "..."` string: wsl.exe
-# re-joins and re-parses its arguments through the default shell internally,
-# so a literal `$` in an inline string gets expanded a second time (by the
-# wrong shell context) before the intended script ever runs - silently
-# swallowing every `$pkg` reference. A file path has nothing for that second
-# pass to mangle. (install-apt-packages.sh itself also pre-filters to names
-# that actually resolve, so one bad entry in apt.txt can't abort every
-# package - that's what happened with a stale "docker-compose-v2" entry.)
-$aptIds = Get-Content "$DotfilesDir\packages\apt.txt" |
-  ForEach-Object { $_.Trim() } |
-  Where-Object { $_ -and $_ -notmatch '^#' }
-wsl.exe -d Debian -u root -- bash "$wslDotfiles/wsl/install-apt-packages.sh" @aptIds
-if ($LASTEXITCODE -ne 0) {
-  warn "apt install failed (exit $LASTEXITCODE) - continuing anyway, check output above."
-}
 
 log "Migrating git credential helper (if needed)..."
 wsl.exe -d Debian -- bash "$wslDotfiles/wsl/migrate-gitconfig-credential.sh" "$wslWindowsGitconfigLocal"
@@ -104,7 +97,18 @@ if ($gitCmd) {
   warn "git.exe not found on Windows - skipping WSL credential bridge."
 }
 
-log "Running install.sh inside WSL..."
-wsl.exe -d Debian -- bash -lc "cd '$wslDotfiles' && ./install.sh"
+log "Running bootstrap/bootstrap.sh inside WSL..."
+# Invoked as a script file with separate arguments, not an inline `bash -lc
+# "..."` string, for the same reason as the (now-removed) apt-install call
+# above: wsl.exe re-joins and re-parses its arguments through the default
+# shell internally, which can mangle an inline string. bootstrap.sh does its
+# own `cd` into provision/ before running ansible-playbook, so no `cd` is
+# needed here.
+$bootstrapArgs = @()
+if ($DotfilesProfile) { $bootstrapArgs += @("--profile", $DotfilesProfile) }
+wsl.exe -d Debian -- bash "$wslDotfiles/bootstrap/bootstrap.sh" @bootstrapArgs
+if ($LASTEXITCODE -ne 0) {
+  warn "bootstrap.sh failed (exit $LASTEXITCODE) - continuing anyway, check output above."
+}
 
 Write-Host "  Debian WSL bootstrap complete"
