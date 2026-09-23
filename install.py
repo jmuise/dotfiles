@@ -120,11 +120,24 @@ def unlink_gated(dst: Path) -> None:
     dst.unlink()
     success(f"unlinked {dst} (profile-gated off)")
 
-def apply_gated_links(enabled: bool, entries) -> None:
-    """Link every (src, dst) pair when enabled; unlink (via unlink_gated) each
-    dst otherwise. See unlink_gated() for the safety rules on removal."""
+def apply_gated_links(action: bool | None, entries) -> None:
+    """Apply the AI-gate tri-state to every (src, dst) pair.
+
+    `action` is the tri-state resolve_ai_gate() returns as its second element,
+    not a plain bool -- do not coerce it with `if action:` at a new call site,
+    that silently collapses `None` (leave alone) into the unlink branch:
+
+      * True  -> link every entry.
+      * False -> unlink every entry (via unlink_gated() -- see its docstring
+        for the safety rules on removal).
+      * None  -> touch NOTHING. This is the invalid-profile state: there is no
+        basis to decide add or remove, so every dst is left exactly as it is
+        on disk, whether that's linked, unlinked, or something else entirely.
+    """
+    if action is None:
+        return
     for src, dst in entries:
-        if enabled:
+        if action:
             link(src, dst)
         else:
             unlink_gated(dst)
@@ -202,15 +215,19 @@ IDENTITY_HOST = "dotfiles-identity.local"
 # never a silent fall-closed to bare -- the reader's own rule, just enforced
 # here at the point where this linker would otherwise act on it.
 def resolve_ai_gate():
-    """Return (profile_name_or_None, ai_enabled: bool).
+    """Return (profile_name_or_None, ai_enabled: bool | None).
 
     profile_name is None iff the profile file is present but invalid, in
-    which case ai_enabled is always False (nothing AI-related is linked or
-    unlinked -- whatever is already on disk is left exactly as it is, since
-    an error state gives no basis for deciding what should be there). The
-    caller is responsible for making that failure loud and for making the
-    process exit non-zero once the rest of the (unrelated) linking work is
-    done -- see the bottom of this file.
+    which case ai_enabled is also None -- a genuine third state, not False --
+    meaning nothing AI-related is linked or unlinked -- whatever is already on
+    disk is left exactly as it is, since an error state gives no basis for
+    deciding what should be there. Every gated call site (apply_gated_links()
+    and the direct unlink_gated() call on copilot_settings_dst) must treat
+    None as "leave alone", distinct from False's "actively unlink" -- collapsing
+    the two by testing `if ai_enabled:` alone is exactly the bug this tri-state
+    exists to prevent from coming back. The caller is responsible for making
+    that failure loud and for making the process exit non-zero once the rest
+    of the (unrelated) linking work is done -- see the bottom of this file.
     """
     try:
         active = _profile_mod.resolve_profile()
@@ -220,7 +237,7 @@ def resolve_ai_gate():
               "~/.config/kilo, ~/.copilot) until this is fixed -- leaving "
               "whatever is currently there untouched. Every other symlink in "
               "this run still applies normally.")
-        return None, False
+        return None, None
     # Only `agentic` links the full AI config directories today. `inline` is
     # deliberately conservative (see #39's brief and PR description): this
     # repo's current ~/.claude / ~/.config/kilo / ~/.copilot layouts don't
@@ -778,7 +795,12 @@ def report_detached_copilot_settings(src: Path, dst: Path) -> None:
 
 copilot_settings_src = DOTFILES / "copilot" / "settings.json"
 copilot_settings_dst = copilot_dir / "settings.json"
-if AI_ENABLED:
+if AI_ENABLED is None:
+    # Invalid profile: the tri-state's "leave alone" state -- same rule as
+    # apply_gated_links(None, ...) below. No basis to decide add or remove, so
+    # this destination is not touched at all, not even the unlink branch.
+    copilot_settings_ok = True  # not a parse failure -- nothing evaluated by design
+elif AI_ENABLED:
     # UNCONDITIONAL, EVERY RUN, BEFORE THE LINK. A settings.json the CLI cannot parse
     # turns the devcontainer guard off with no warning of any kind (see the function's
     # docstring), so the only place that can be caught is here. Gate the symlink on it:
