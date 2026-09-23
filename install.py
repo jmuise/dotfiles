@@ -239,15 +239,18 @@ def resolve_ai_gate():
               "this run still applies normally.")
         return None, None
     # Only `agentic` links the full AI config directories today. `inline` is
-    # deliberately conservative (see #39's brief and PR description): this
-    # repo's current ~/.claude / ~/.config/kilo / ~/.copilot layouts don't
-    # cleanly separate "one-shot CLI" files from "agentic roster / skills /
-    # MCP / orchestrator" files (CLAUDE.md, settings.json and hooks/ serve
-    # both concerns at once), so rather than guess at a partial split that
-    # could leak agentic-only capability into `inline`, nothing AI-related is
-    # linked for `inline` yet. #40 (nested profile model + nvim gate) is
-    # expected to define the exact inline asset list; this function is the
-    # single place that decision plugs into.
+    # deliberately kept conservative (originally #39, re-evaluated and kept
+    # this way by #40's own brief and PR description): this repo's current
+    # ~/.claude / ~/.config/kilo / ~/.copilot layouts don't cleanly separate
+    # "one-shot CLI" files from "agentic roster / skills / MCP / orchestrator"
+    # files (CLAUDE.md mixes guardrail text -- no-AI-attribution,
+    # devcontainer-first -- with orchestrator-steering text -- delegate to
+    # `number-one` -- in the SAME file; settings.json and hooks/ are pure
+    # guardrail enforcement but forking CLAUDE.md to split them out is real
+    # restructuring, not a linking change). Rather than guess at a partial
+    # split that could leak agentic-only capability into `inline`, nothing
+    # AI-related is linked for `inline` -- see #40's PR description for the
+    # concrete proposed inline link set left open for the Captain to decide.
     enabled = _profile_mod.profile_at_least(active, "agentic")
     return active, enabled
 
@@ -401,22 +404,15 @@ if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
 # one checkout. See hooks/_dispatch.sh for the guard that reads this back.
 log("Install receipt...")
 
-def _first_symlinked_ancestor(path: Path, home: Path) -> Path | None:
-    """Return the first symlink at `path` or any ancestor up to `home`.
-
-    None if the ancestry is clean. This is issue #29's ancestry-walk check,
-    kept as a single named helper (rather than inlined) so there is exactly
-    one implementation of it in this file even though there is only one
-    call site today -- a second state-marker write in this script should
-    reuse this rather than re-deriving the walk.
-    """
-    current = path
-    while True:
-        if current.is_symlink():
-            return current
-        if current == home or current.parent == current:
-            return None
-        current = current.parent
+# _first_symlinked_ancestor() used to be defined here, locally -- one
+# implementation of issue #29's ancestry-walk check per state-marker write
+# site. #40 added a second write site (the `profile` file, via
+# profile/profile.py's write_profile()) with the identical check, so rather
+# than grow a third copy the walk now lives once in profile/profile.py and
+# both this receipt write and write_profile() import it from there. Called
+# the same way this file always called its own copy -- positionally, parent
+# directory first, $HOME second -- so behaviour here is unchanged.
+_first_symlinked_ancestor = _profile_mod._first_symlinked_ancestor
 
 if DRY_RUN:
     print(f"  would record install root: {DOTFILES}")
@@ -512,6 +508,13 @@ link(DOTFILES / "yazi", HOME / ".config" / "yazi")
 
 log("start-project (sp)...")
 link(DOTFILES / "tools" / "start-project.sh", HOME / ".local" / "bin" / "start-project")
+
+# `dotfiles` CLI (#40) -- today just `dotfiles profile [<name>] [--dry-run]`,
+# see tools/dotfiles.py. Linked the same way as smart-editor/start-project
+# above: unconditionally, regardless of AI profile -- this is a general
+# checkout-management command, not AI-gated content.
+log("dotfiles CLI...")
+link(DOTFILES / "tools" / "dotfiles.py", HOME / ".local" / "bin" / "dotfiles")
 
 # ── SSH ───────────────────────────────────────────────────────────────────────
 log("SSH...")
