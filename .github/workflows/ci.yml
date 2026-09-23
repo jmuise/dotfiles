@@ -25,6 +25,9 @@ jobs:
       - name: python -m py_compile install.py
         run: python3 -m py_compile install.py
 
+      - name: python -m py_compile legacy/provision_legacy.py
+        run: python3 -m py_compile legacy/provision_legacy.py
+
       - name: bash -n on every tracked shell script
         run: |
           set -uo pipefail
