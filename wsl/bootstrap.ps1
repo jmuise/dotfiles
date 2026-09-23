@@ -6,15 +6,16 @@
 # gitconfig migration need the real default user's $HOME, so those only run
 # once the distro is fully Ready.
 #
-# Package installs (packages/apt.txt) and the Layer 2 dotfiles symlinking
-# (install.sh) used to happen from here directly. They are now Layer 0/1's
-# job: bootstrap/bootstrap.sh installs its own prerequisites and hands off to
-# `ansible-playbook provision/site.yml`, which reads packages/apt.txt itself
-# (provision/roles/packages). bootstrap.sh deliberately does not run
-# install.sh (Layer 2) — see bootstrap/README.md; that wiring is a later
-# phase (dotfiles issue #47), so a WSL/Windows box bootstrapped via this path
-# does not get its dotfiles symlinked automatically yet. Run `./install.sh`
-# by hand inside the WSL checkout bootstrap.sh creates until then.
+# Package installs (packages/apt.txt) used to happen from here directly.
+# That's now Layer 0/1's job: bootstrap/bootstrap.sh installs its own
+# prerequisites and hands off to `ansible-playbook provision/site.yml`, which
+# reads packages/apt.txt itself (provision/roles/packages). bootstrap.sh
+# deliberately does not run install.sh (Layer 2) — see bootstrap/README.md;
+# the full Layer 0 -> 1 -> 2 chain living inside bootstrap.sh itself is a
+# later phase (dotfiles issue #47). Until then, this script chains the two
+# from the Windows side: it runs bootstrap.sh, then — only if that
+# succeeded — runs install.sh in the same WSL checkout bootstrap.sh just
+# cloned/updated, so a Windows install still ends with dotfiles symlinked.
 
 param([string]$DotfilesDir, [string]$DotfilesProfile, [switch]$DryRun)
 
@@ -97,6 +98,15 @@ if ($gitCmd) {
   warn "git.exe not found on Windows - skipping WSL credential bridge."
 }
 
+# The WSL-native checkout bootstrap.sh clones/fast-forwards (distinct from
+# $wslDotfiles above, which is this *Windows* checkout mounted into WSL).
+# Resolved once here and passed to bootstrap.sh explicitly via --dest so
+# there is exactly one place computing it — the install.sh call below reuses
+# the same variable rather than recomputing bootstrap.sh's own "$HOME/dotfiles"
+# default, which would silently drift if that default ever changed.
+$wslHome = (wsl.exe -d Debian -- bash -c 'printf %s "$HOME"')
+$wslBootstrapDest = "$($wslHome.Trim())/dotfiles"
+
 log "Running bootstrap/bootstrap.sh inside WSL..."
 # Invoked as a script file with separate arguments, not an inline `bash -lc
 # "..."` string, for the same reason as the (now-removed) apt-install call
@@ -104,11 +114,18 @@ log "Running bootstrap/bootstrap.sh inside WSL..."
 # shell internally, which can mangle an inline string. bootstrap.sh does its
 # own `cd` into provision/ before running ansible-playbook, so no `cd` is
 # needed here.
-$bootstrapArgs = @()
+$bootstrapArgs = @("--dest", $wslBootstrapDest)
 if ($DotfilesProfile) { $bootstrapArgs += @("--profile", $DotfilesProfile) }
 wsl.exe -d Debian -- bash "$wslDotfiles/bootstrap/bootstrap.sh" @bootstrapArgs
 if ($LASTEXITCODE -ne 0) {
-  warn "bootstrap.sh failed (exit $LASTEXITCODE) - continuing anyway, check output above."
+  warn "bootstrap.sh failed (exit $LASTEXITCODE) - aborting; install.sh was NOT run, so dotfiles are not symlinked. Fix the error above, then re-run install.ps1."
+  return
+}
+
+log "Running install.sh inside the WSL checkout bootstrap.sh just created ($wslBootstrapDest)..."
+wsl.exe -d Debian -- bash "$wslBootstrapDest/install.sh"
+if ($LASTEXITCODE -ne 0) {
+  warn "install.sh failed (exit $LASTEXITCODE) - continuing anyway, check output above."
 }
 
 Write-Host "  Debian WSL bootstrap complete"
