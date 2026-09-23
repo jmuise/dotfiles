@@ -53,7 +53,8 @@ Options:
                        -> error, never falls back).
   --repo <url>         git URL to clone. Default: $DOTFILES_BOOTSTRAP_DEFAULT_REPO
                        (env: DOTFILES_BOOTSTRAP_REPO)
-  --dest <path>        destination directory. Default: \$HOME/dotfiles
+  --dest <path>        destination directory. Must be an absolute path with
+                       no '.' or '..' segments. Default: \$HOME/dotfiles
                        (env: DOTFILES_BOOTSTRAP_DEST)
   --ref <ref>          branch or tag to clone/track. Default: the repo's
                        default branch (env: DOTFILES_BOOTSTRAP_REF)
@@ -239,6 +240,23 @@ sync_existing_clone() {
 # carrying on. Only walks the ancestry when $dest is actually under $HOME;
 # outside $HOME there is no fixed stopping point to assert without more
 # context, so it is left alone.
+#
+# $dest is required to already be an absolute, lexically-normalised path by
+# the time it gets here (see validate_dest_path() in main()) -- this walk
+# depends on that: a relative --dest that happens to resolve under $HOME
+# would otherwise skip the "$dest"/"$home"/* prefix match below via a
+# string-prefix mismatch even though it lands under $HOME once resolved
+# against the process's cwd, and a '..' segment could walk back out from
+# under $HOME the prefix match assumed it was confined to.
+#
+# This is still a check-then-act (TOCTOU) race: nothing stops another
+# process from replacing an ancestor directory with a symlink between this
+# check returning clean and git actually writing to $dest a moment later.
+# Closing that fully would need an atomic openat2(..., RESOLVE_NO_SYMLINKS)
+# style primitive, not available from a POSIX shell script; this is a
+# best-effort guard against a static symlink already in place, not a hard
+# guarantee against a raced one. No code change follows from this -- it's
+# an acknowledged, accepted limitation.
 check_dest_symlinks() {
   local dest="$1" home dir parent
   home="${HOME%/}"
@@ -259,6 +277,36 @@ check_dest_symlinks() {
     [ "$parent" = "$dir" ] && break
     dir="$parent"
   done
+}
+
+# check_dest_symlinks()'s ancestor walk relies on $dest being exactly the
+# absolute path that will be used for the clone -- a relative --dest that
+# happens to resolve under $HOME would pass a naive string-prefix test
+# ("does $dest start with $home?") even when it isn't actually under $HOME
+# textually, and a '.'/'..' segment could make the *real*, resolved
+# destination land somewhere the prefix match never walks (or escape $HOME
+# entirely while still textually starting with it, e.g.
+# "$HOME/../../etc/foo"). Reject both up front, at argument-parsing time,
+# rather than let sync_repo()/check_dest_symlinks() reason about a path that
+# doesn't say what it means. Deliberately lexical: this does not resolve
+# symlinks (that would defeat check_dest_symlinks() itself, which needs the
+# literal, symlink-unresolved path to detect a symlinked ancestor at all).
+validate_dest_path() {
+  local dest="$1" source_desc="$2"
+  case "$dest" in
+    /*) : ;;
+    *) die "$source_desc must be an absolute path (starting with '/'), got: '$dest'" ;;
+  esac
+  # Matches a '.' or '..' path component anywhere in the (slash-terminated)
+  # path: "/./" or "/../" as a substring. Appending '/' before matching also
+  # catches a trailing ".." or "." component (e.g. "/foo/.."), and the
+  # leading '/' already required above means a leading ".."/"." component
+  # (e.g. "/../foo") is caught too, since that renders as "/../foo/".
+  case "$dest/" in
+    */../*|*/./*)
+      die "$source_desc must not contain '.' or '..' path segments (found in '$dest') — pass a fully resolved absolute path instead"
+      ;;
+  esac
 }
 
 sync_repo() {
@@ -362,6 +410,12 @@ main() {
   case "$ref" in
     -*) die "--ref value must not start with '-' (looks like an option, not a value): '$ref'" ;;
   esac
+
+  # --dest (and its DOTFILES_BOOTSTRAP_DEST env equivalent) must be an
+  # absolute, lexically-normalised path -- see validate_dest_path() above
+  # for why check_dest_symlinks()'s string-prefix ancestry test depends on
+  # this.
+  validate_dest_path "$dest" "--dest (or DOTFILES_BOOTSTRAP_DEST)"
 
   if [ "$dry_run" -eq 1 ]; then
     log "DRY RUN — no changes will be made; ansible will still run --check --diff if it is already installed"
