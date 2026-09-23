@@ -39,6 +39,12 @@
 -- asks of every other consumer.
 return {
   "zbirenbaum/copilot.lua",
+  -- Pinned to the latest tagged release as of this writing. This `version`
+  -- field is a hint to lazy.nvim's resolver, not the source of truth --
+  -- nvim/lazy-lock.json is authoritative for the exact commit every
+  -- machine actually installs (see the discussion above); update both
+  -- together via `:Lazy update`.
+  version = "v3.1.9",
   cond = function()
     return require("config.profile").at_least("inline")
   end,
