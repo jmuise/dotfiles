@@ -1,5 +1,5 @@
-# Pinned for `make roster` / `make roster-check` in CI. Jinja2 also ships
-# bundled with Ansible (see roster/render.py's docstring) — that copy is fine
-# for a quick local check, but CI installs this pin explicitly rather than
-# depending on whatever Ansible happens to vendor.
+# Pinned for `make roster` / `make roster-check` in CI: pip install -r roster/requirements.txt
+# Note: a system Ansible install may vendor its own Jinja2 copy, but it is
+# not reliably importable from a plain `python3` (e.g. under a pipx-installed
+# Ansible) — don't rely on it as a fallback; install this pin instead.
 jinja2==3.1.6

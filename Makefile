@@ -1,5 +1,7 @@
-# Top-level entry points for this repo. Mirrored in .vscode/tasks.json —
-# keep both in sync when a target here changes.
+# Top-level entry points for this repo. Deliberately no .vscode/tasks.json
+# mirror: this repo has no project-local .vscode/ at all (the vscode/
+# directory here is global VS Code config symlinked elsewhere), so there is
+# nothing for these targets to be mirrored into.
 
 .PHONY: roster roster-check
 

@@ -29,8 +29,7 @@ try:
 except ImportError:
     print(
         "error: Jinja2 is not installed for this Python interpreter.\n"
-        "  Install the pinned version: pip install -r roster/requirements.txt\n"
-        "  (Jinja2 also ships bundled with Ansible, if that's already on this machine.)",
+        "  Install the pinned version: pip install -r roster/requirements.txt",
         file=sys.stderr,
     )
     raise SystemExit(1)
