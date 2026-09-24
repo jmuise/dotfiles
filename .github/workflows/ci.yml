@@ -95,7 +95,7 @@ jobs:
           bash hooks/pre-commit
           echo "hooks/pre-commit passed: spine consistent, never-merge invariant intact"
 
-  # Lint gate, scoped to the operational core: the installer entrypoint, the
+  # Lint gate, scoped to the operational core: the installer entrypoints, the
   # git-hook machinery, the tools/ scripts, and the Claude hook scripts.
   # severity=warning so style-only info notes do not gate merges. The rc
   # fragments under shell/ and the platform helpers under git/, wsl/, macos/
@@ -111,6 +111,7 @@ jobs:
           shellcheck --version
           shellcheck --severity=warning --external-sources \
             install.sh \
+            bootstrap/bootstrap.sh \
             hooks/pre-commit \
             hooks/_dispatch.sh \
             tools/smart-editor.sh \
