@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: macos
+  namespace: dotfiles
+  author: dotfiles maintainers
+  description: >-
+    Apply macOS user-defaults preferences converted 1:1 from macos/defaults.sh
+    (Finder, Dock, keyboard, trackpad, screenshots, Safari, Activity Monitor),
+    restarting the affected apps only when something actually changed.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: MacOSX
+      versions: [all]
+
+# community.general provides osx_defaults, the only module this role uses.
+# It ships with the `ansible` package (pipx install --include-deps ansible);
+# listed here so `ansible-galaxy role install` / lint knows about it.
+collections:
+  - community.general
+
+dependencies: []

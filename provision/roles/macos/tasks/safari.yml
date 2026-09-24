@@ -1,0 +1,14 @@
+---
+# ── Safari (dev) ──────────────────────────────────────────────────────────────
+# macos/defaults.sh line:
+#   defaults write com.apple.Safari IncludeDevelopMenu -bool true
+#
+# Not restarted in the original script; takes effect the next time Safari
+# launches.
+
+- name: Enable the Safari Develop menu
+  community.general.osx_defaults:
+    domain: com.apple.Safari
+    key: IncludeDevelopMenu
+    type: bool
+    value: true
