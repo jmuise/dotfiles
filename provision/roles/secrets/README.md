@@ -22,6 +22,19 @@ Each is independently toggleable (`secrets_seed_identity`,
 `secrets_seed_gh_token`, `secrets_seed_claude_token`,
 `secrets_seed_openrouter_key`, all default `true`).
 
+Once a value is confirmed present in the credential store (whether just
+written or already correct), the role also touches the same sentinel file
+(`claude-token.configured`, `openrouter-token.configured`,
+`gh-token.configured` under `$XDG_CACHE_HOME/dotfiles`) that
+`secrets/setup-claude-token.sh` / `setup-openrouter-key.sh` /
+`legacy/provision_legacy.py`'s devcontainer-extras step write after their own
+readback check. `shell/exports.sh` gates its credential-store lookup on that
+sentinel existing (a lookup against an unconfigured host is not a fast
+no-op), so a machine seeded *only* via this role -- never having run the
+interactive scripts -- is still picked up on the very next new shell. There
+is no sentinel for the git identity; nothing in the shell-rc layer gates on
+one for it.
+
 ## What this role does that legacy did not
 
 `legacy/provision_legacy.py` only ever *derives and re-stores* the git
