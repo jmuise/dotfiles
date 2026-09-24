@@ -40,6 +40,26 @@ ansible-playbook site.yml -e profile=inline --check --diff
 ansible-playbook site.yml -e profile=agentic
 ```
 
+### Tags
+
+Every task in the `packages` role is tagged `packages`; the profile-gated AI
+CLI install task (`roles/packages/tasks/ai_clis.yml`) additionally carries
+`ai_clis`. `site.yml`'s `pre_tasks` (profile resolution, `want_ai_clis`) are
+tagged `always` so they still run even when `--tags` narrows everything else
+— they're read-only and every other task depends on the facts they set.
+
+```sh
+# Everything a profile switch needs, skipping the (slow, sudo-needing) OS
+# package sweep -- this is what `dotfiles profile <name>` (tools/dotfiles.py,
+# #40) runs after re-linking:
+ansible-playbook site.yml -e profile=bare --tags ai_clis
+```
+
+Added for #40's `dotfiles profile <name>` CLI: switching between
+`bare`/`inline`/`agentic` never changes the OS package manifests, only
+`want_ai_clis`, so re-running the whole `apt`/`brew` install on every profile
+switch would be slow and need privileges for no reason.
+
 `profile` is **not** defined in this tree. With no `-e profile=`, `site.yml`
 shells out to the shared reader (`profile/profile.py`, PR #53), which reads
 `${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/profile` and resolves an **absent
