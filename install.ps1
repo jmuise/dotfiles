@@ -7,9 +7,23 @@
 # Usage:
 #   .\install.ps1
 #   .\install.ps1 -DryRun
+#   .\install.ps1 -DotfilesProfile inline
 # =============================================================================
 
-param([switch]$DryRun, [switch]$SkipWSL)
+# -DotfilesProfile (not -Profile: PowerShell's automatic $PROFILE variable —
+# the current user's profile script path, used further down — would collide
+# with a parameter literally named Profile). Forwarded to bootstrap/bootstrap.sh
+# inside WSL as --profile; left empty, bootstrap.sh resolves it itself from
+# profile/profile.sh once it has cloned the repo (absent file -> agentic).
+#
+# ValidateSet (rather than trusting bootstrap.sh's own --profile check) so an
+# invalid value is rejected here, in PowerShell, before it ever reaches
+# wsl.exe. wsl.exe re-joins and re-parses its argument list through the WSL
+# default shell internally (see wsl/bootstrap.ps1), so a value like
+# 'agentic; curl ... | bash' could otherwise run as a second command inside
+# WSL before bootstrap.sh's own validation ever sees it. '' is included
+# because this parameter is optional and empty is its unset default.
+param([switch]$DryRun, [switch]$SkipWSL, [ValidateSet('', 'bare', 'inline', 'agentic')][string]$DotfilesProfile)
 
 $ErrorActionPreference = "Stop"
 $DOTFILES = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -30,6 +44,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     $reArgs = @()
     if ($DryRun)  { $reArgs += "-DryRun" }
     if ($SkipWSL) { $reArgs += "-SkipWSL" }
+    if ($DotfilesProfile) { $reArgs += @("-DotfilesProfile", $DotfilesProfile) }
     & $pwsh.Source -NoLogo -NoProfile -File $PSCommandPath @reArgs
     exit $LASTEXITCODE
   }
@@ -458,8 +473,8 @@ if ($wslconfigChanged -and -not $DryRun) {
 # WSL (Debian) + Windows Terminal
 if (-not $SkipWSL) {
   log "WSL (Debian)..."
-  if ($DryRun) { & "$DOTFILES\wsl\bootstrap.ps1" -DotfilesDir $DOTFILES -DryRun }
-  else         { & "$DOTFILES\wsl\bootstrap.ps1" -DotfilesDir $DOTFILES }
+  if ($DryRun) { & "$DOTFILES\wsl\bootstrap.ps1" -DotfilesDir $DOTFILES -DotfilesProfile $DotfilesProfile -DryRun }
+  else         { & "$DOTFILES\wsl\bootstrap.ps1" -DotfilesDir $DOTFILES -DotfilesProfile $DotfilesProfile }
 
   log "Windows Terminal..."
   if ($DryRun) { & "$DOTFILES\windows-terminal\configure.ps1" -DryRun }

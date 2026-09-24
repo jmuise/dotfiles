@@ -113,7 +113,7 @@ git-credential forwarding, since the latter is only confirmed to work for
 real git hosts, not the synthetic host `secrets/` uses for the Claude Code
 token (see [secrets/README.md](secrets/README.md)).
 
-**`sp [path]`** is the terminal equivalent of clicking "Reopen in Container" in VS Code: it builds/starts the project's devcontainer via the `devcontainer` CLI and drops you into a shell inside it. Pass `-c`/`--code` to attach VS Code to the container instead of opening a shell. Backed by `tools/start-project.sh`; the `devcontainer` CLI itself is installed by `install.py` (pinned as `DEVCONTAINERS_CLI_VERSION`, same npm-global pattern as Kilo/Copilot).
+**`sp [path]`** is the terminal equivalent of clicking "Reopen in Container" in VS Code: it builds/starts the project's devcontainer via the `devcontainer` CLI and drops you into a shell inside it. Pass `-c`/`--code` to attach VS Code to the container instead of opening a shell. Backed by `tools/start-project.sh`; the `devcontainer` CLI itself is installed by `install.py` (via `legacy/provision_legacy.py`; pinned as `DEVCONTAINERS_CLI_VERSION`, same npm-global pattern as Kilo/Copilot).
 
 ## Claude Code
 
@@ -127,7 +127,7 @@ Number One can also grow the roster itself: when it identifies a recurring role 
 
 Two third-party tools aimed at cutting token usage are wired in. Both are vendored into this repo rather than installed by their own auto-patchers, so every file they touch is under version control here.
 
-- **[rtk](https://github.com/rtk-ai/rtk)** (Rust Token Killer) — a CLI proxy that filters/compresses command output before it reaches the model. `claude/hooks/rtk-rewrite.sh` is a `PreToolUse` `Bash` hook (registered **last** in `claude/settings.json`, after the merge/attribution/devcontainer guards, so those are evaluated first) that transparently rewrites recognised read-only commands — `git status`, `ls`, `grep`, `cargo test`, … — to their `rtk …` equivalents. The hook exits 0 on every error path (missing binary, missing `jq`, old version), so it never blocks a command. The binary is installed by `install.py` from rtk's own release script — pinned to a commit (`RTK_INSTALLER_SHA`, not a mutable tag), which then downloads and checksum-verifies the `RTK_VERSION` binary — into `~/.local/bin`. `claude/rtk-awareness.md` is vendored and linked to `~/.claude/rtk-awareness.md` but deliberately **not** pulled into `CLAUDE.md` — the hook needs no context to work; `@rtk-awareness.md` is there on demand for the `rtk gain` / `rtk discover` meta-commands.
+- **[rtk](https://github.com/rtk-ai/rtk)** (Rust Token Killer) — a CLI proxy that filters/compresses command output before it reaches the model. `claude/hooks/rtk-rewrite.sh` is a `PreToolUse` `Bash` hook (registered **last** in `claude/settings.json`, after the merge/attribution/devcontainer guards, so those are evaluated first) that transparently rewrites recognised read-only commands — `git status`, `ls`, `grep`, `cargo test`, … — to their `rtk …` equivalents. The hook exits 0 on every error path (missing binary, missing `jq`, old version), so it never blocks a command. The binary is installed by `install.py` (via `legacy/provision_legacy.py`) from rtk's own release script — pinned to a commit (`RTK_INSTALLER_SHA`, not a mutable tag), which then downloads and checksum-verifies the `RTK_VERSION` binary — into `~/.local/bin`. `claude/rtk-awareness.md` is vendored and linked to `~/.claude/rtk-awareness.md` but deliberately **not** pulled into `CLAUDE.md` — the hook needs no context to work; `@rtk-awareness.md` is there on demand for the `rtk gain` / `rtk discover` meta-commands.
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — an output-compression style. Only its core skill is vendored, as `claude/skills/caveman/SKILL.md` (rides the existing `claude/skills/` symlink into Claude Code and Copilot). Activate per session with `/caveman` (`lite` / `full` / `ultra`); `stop caveman` reverts. The SessionStart hooks, statusline badge, MCP tools and plugin from its full installer are **not** installed.
 
 Independent benchmarking (JetBrains, July 2026) found real-world savings well below the headline claims — caveman around an 8.5% output-token reduction, rtk roughly break-even depending on reasoning effort — so treat these as experiments. `rtk gain` reports rtk's measured savings; caveman's own `docs/HONEST-NUMBERS.md` covers the net-of-overhead picture. To back either out: remove the `rtk-rewrite.sh` hook entry from `claude/settings.json` (and the `install.py` stanza), or delete `claude/skills/caveman/`.
@@ -390,7 +390,7 @@ the WSL distro, and `powershell/profile.ps1` defines a `kilo` function that
 starts a Kilo session inside Debian with the same argument-forwarding
 guarantees (no cmd.exe, absolute `wsl.exe` path, no `--cd`). Run
 `npm install -g @kilocode/cli@7.4.22` inside the distro to install it there
-(pinned deliberately — see `KILO_CLI_VERSION` in `install.py`). Set
+(pinned deliberately — see `KILO_CLI_VERSION` in `legacy/provision_legacy.py`). Set
 `KILO_WSL_DISTRO` to target a different distro.
 
 Authentication (`kilo auth login`) is done interactively inside the WSL distro —
@@ -404,7 +404,7 @@ Same forwarding pattern as `claude`/`kilo` above — the GitHub Copilot CLI
 install lives inside the WSL distro, and `powershell/profile.ps1` defines a
 `copilot` function with the same argument-forwarding guarantees. Run
 `npm install -g @github/copilot@1.0.80` inside the distro to install it there
-(pinned deliberately — see `COPILOT_CLI_VERSION` in `install.py`). Set
+(pinned deliberately — see `COPILOT_CLI_VERSION` in `legacy/provision_legacy.py`). Set
 `COPILOT_WSL_DISTRO` to target a different distro.
 
 No separate login step or credential forwarding needed: Copilot CLI checks

@@ -39,66 +39,79 @@
     # `-e profile=<tier>` -> that value wins.
 
   pre_tasks:
-    - name: Resolve the active profile from the shared reader (no -e override)
-      ansible.builtin.command:
-        cmd: python3 {{ dotfiles_dir }}/profile/profile.py
-      register: _dotfiles_profile_read
-      changed_when: false
-      failed_when: _dotfiles_profile_read.rc != 0
-      check_mode: false # read-only: the reader only reads the profile file
-      when: profile is not defined
+    # Tagged `always` as a block: #40's `dotfiles profile <name>` CLI re-runs
+    # this play scoped to `--tags ai_clis` after a profile switch, and the
+    # packages role's ai_clis task (roles/packages/tasks/main.yml) depends on
+    # want_ai_clis, which is only ever set here. Without `always` these tasks
+    # would themselves be filtered out by that same --tags flag (a task with
+    # no tag of its own is NOT included when --tags excludes it), silently
+    # leaving want_ai_clis/dotfiles_profile undefined. Read-only profile
+    # resolution is safe to always run regardless of which tags were
+    # requested.
+    - name: Resolve the active dotfiles profile and the AI-CLI gate
+      tags: [always]
+      block:
+        - name: Resolve the active profile from the shared reader (no -e override)
+          ansible.builtin.command:
+            cmd: python3 {{ dotfiles_dir }}/profile/profile.py
+          register: _dotfiles_profile_read
+          changed_when: false
+          failed_when: _dotfiles_profile_read.rc != 0
+          check_mode: false # read-only: the reader only reads the profile file
+          when: profile is not defined
 
-    - name: Validate an explicit -e profile= override via the shared reader
-      # `--at-least <name>` exits 2 on an unknown profile name, which is how a
-      # typo in `-e profile=` is surfaced without re-encoding the profile list
-      # here. rc 0/1 (override is a real tier) both pass. XDG_CONFIG_HOME is
-      # pointed at a guaranteed-absent path so the reader resolves the "file"
-      # to the default and this task validates *only* the -e token -- an
-      # explicit override must not be held hostage to a broken on-disk file.
-      ansible.builtin.command:
-        cmd: python3 {{ dotfiles_dir }}/profile/profile.py --at-least {{ profile }}
-      environment:
-        XDG_CONFIG_HOME: /nonexistent
-      register: _dotfiles_profile_override_check
-      changed_when: false
-      failed_when: _dotfiles_profile_override_check.rc == 2
-      check_mode: false # read-only name check via the shared reader
-      when: profile is defined
+        - name: Validate an explicit -e profile= override via the shared reader
+          # `--at-least <name>` exits 2 on an unknown profile name, which is how a
+          # typo in `-e profile=` is surfaced without re-encoding the profile list
+          # here. rc 0/1 (override is a real tier) both pass. XDG_CONFIG_HOME is
+          # pointed at a guaranteed-absent path so the reader resolves the "file"
+          # to the default and this task validates *only* the -e token -- an
+          # explicit override must not be held hostage to a broken on-disk file.
+          ansible.builtin.command:
+            cmd: python3 {{ dotfiles_dir }}/profile/profile.py --at-least {{ profile }}
+          environment:
+            XDG_CONFIG_HOME: /nonexistent
+          register: _dotfiles_profile_override_check
+          changed_when: false
+          failed_when: _dotfiles_profile_override_check.rc == 2
+          check_mode: false # read-only name check via the shared reader
+          when: profile is defined
 
-    - name: Record the resolved profile (from the shared reader)
-      ansible.builtin.set_fact:
-        dotfiles_profile: "{{ _dotfiles_profile_read.stdout | trim }}"
-      when: profile is not defined
+        - name: Record the resolved profile (from the shared reader)
+          ansible.builtin.set_fact:
+            dotfiles_profile: "{{ _dotfiles_profile_read.stdout | trim }}"
+          when: profile is not defined
 
-    - name: Record the resolved profile (from the -e profile= override)
-      ansible.builtin.set_fact:
-        dotfiles_profile: "{{ profile }}"
-      when: profile is defined
+        - name: Record the resolved profile (from the -e profile= override)
+          ansible.builtin.set_fact:
+            dotfiles_profile: "{{ profile }}"
+          when: profile is defined
 
-    - name: Announce the resolved profile
-      ansible.builtin.debug:
-        msg: "profile = {{ dotfiles_profile }}"
+        - name: Announce the resolved profile
+          ansible.builtin.debug:
+            msg: "profile = {{ dotfiles_profile }}"
 
-    - name: Decide whether AI CLIs are in scope (reader gate, no -e override)
-      # 0 = at least inline, 1 = below inline, 2 = broken profile file.
-      ansible.builtin.command:
-        cmd: python3 {{ dotfiles_dir }}/profile/profile.py --at-least inline
-      register: _dotfiles_profile_at_least_inline
-      changed_when: false
-      failed_when: _dotfiles_profile_at_least_inline.rc == 2
-      check_mode: false # read-only gate query via the shared reader
-      when: profile is not defined
+        - name: Decide whether AI CLIs are in scope (reader gate, no -e override)
+          # 0 = at least inline, 1 = below inline, 2 = broken profile file.
+          ansible.builtin.command:
+            cmd: python3 {{ dotfiles_dir }}/profile/profile.py --at-least inline
+          register: _dotfiles_profile_at_least_inline
+          changed_when: false
+          failed_when: _dotfiles_profile_at_least_inline.rc == 2
+          check_mode: false # read-only gate query via the shared reader
+          when: profile is not defined
 
-    - name: Set want_ai_clis from the reader gate
-      ansible.builtin.set_fact:
-        want_ai_clis: "{{ _dotfiles_profile_at_least_inline.rc == 0 }}"
-      when: profile is not defined
+        - name: Set want_ai_clis from the reader gate
+          ansible.builtin.set_fact:
+            want_ai_clis: "{{ _dotfiles_profile_at_least_inline.rc == 0 }}"
+          when: profile is not defined
 
-    - name: Set want_ai_clis from the -e profile= override
-      # AI CLIs come in at inline and above; bare is the only tier without them.
-      ansible.builtin.set_fact:
-        want_ai_clis: "{{ dotfiles_profile in ['inline', 'agentic'] }}"
-      when: profile is defined
+        - name: Set want_ai_clis from the -e profile= override
+          # AI CLIs come in at inline and above; bare is the only tier without them.
+          ansible.builtin.set_fact:
+            want_ai_clis: "{{ dotfiles_profile in ['inline', 'agentic'] }}"
+          when: profile is defined
 
   roles:
     - role: packages
+      tags: [packages]
