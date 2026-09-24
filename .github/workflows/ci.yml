@@ -34,8 +34,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: python -m py_compile install.py
-        run: python3 -m py_compile install.py
+      - name: python -m py_compile install.py roster/*.py
+        run: python3 -m py_compile install.py roster/render.py roster/targets.py
 
       - name: python -m py_compile legacy/provision_legacy.py
         run: python3 -m py_compile legacy/provision_legacy.py
@@ -80,20 +80,42 @@ jobs:
           )
           exit "$status"
 
-  # Invariant gate: runs the "number-one" agent-spine drift guard and the
-  # ABSOLUTE RULE (never-merge) invariant check. hooks/pre-commit reads the
-  # git index via `git show :<path>`, which on a fresh checkout is identical
-  # to HEAD, so the hook runs unmodified here with no staging step.
+  # Invariant gate: this job name is a required status check under branch
+  # protection, so it keeps its old name (`agent-spine-drift`) even though
+  # spine-comparison-by-marker is gone — renaming it would block every PR
+  # until someone updated the branch-protection setting by hand.
+  #
+  # Two independent checks now live here:
+  #   - `make roster-check` (roster/render.py --check) regenerates every
+  #     agent-definition file from roster/templates/*.md.j2 and diffs
+  #     against what's committed. This is what "spine drift" means today:
+  #     not two hand-maintained copies disagreeing, but a generated file
+  #     that no longer matches its own template.
+  #   - hooks/pre-commit, which still carries the ABSOLUTE RULE (never-merge)
+  #     invariant check, independent of generation (see that file's header
+  #     for why). It reads the git index via `git show :<path>`, which on a
+  #     fresh checkout is identical to HEAD, so the hook runs unmodified here
+  #     with no staging step.
   agent-spine-drift:
     name: agent-spine-drift
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: hooks/pre-commit (spine drift + never-merge invariant)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: pip install -r roster/requirements.txt
+        run: pip install -r roster/requirements.txt
+
+      - name: make roster-check (regenerated roster matches committed files)
+        run: make roster-check
+
+      - name: hooks/pre-commit (never-merge invariant)
         run: |
           bash hooks/pre-commit
-          echo "hooks/pre-commit passed: spine consistent, never-merge invariant intact"
+          echo "hooks/pre-commit passed: never-merge invariant intact"
 
   # Lint gate, scoped to the operational core: the installer entrypoints, the
   # git-hook machinery, the tools/ scripts, and the Claude hook scripts.
@@ -116,7 +138,6 @@ jobs:
             hooks/_dispatch.sh \
             tools/smart-editor.sh \
             tools/start-project.sh \
-            tools/sync-agent.sh \
             claude/hooks/block-ai-attribution.sh \
             claude/hooks/block-pr-merge.sh \
             claude/hooks/require-devcontainer.sh

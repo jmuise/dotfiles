@@ -11,9 +11,10 @@ Personal dev machine config for macOS, Linux, and Windows — built to work seam
 | `powershell/` | PowerShell 7+ profile (PSReadLine, posh-git, `claude` → WSL forwarding, `kilo` → WSL forwarding, `copilot` → WSL forwarding, `rtk` → WSL forwarding) + a Windows PowerShell 5.1 shim that hands off to pwsh |
 | `cmd/` | `init.cmd` — doskey macros + prompt for cmd.exe, loaded via AutoRun |
 | `vscode/` | `settings.json`, `keybindings.json`, `extensions.txt` |
-| `claude/` | Claude Code **global** config (`CLAUDE.md`, `settings.json`), plus `agents/` (the subagent roster, led by the `number-one` orchestrator), `skills/` (on-demand procedural knowledge, including the global-vs-project config-scoping convention and the vendored `caveman` output-compression skill), `hooks/` (`PreToolUse` guardrails blocking PR-merge/force-push and AI-attribution lines, the devcontainer guard the other two CLIs defer to, and `rtk-rewrite.sh` for token-saving command rewrites) and `rtk-awareness.md`. This directory is the source of truth the Kilo and Copilot config below borrows from rather than copies — see [Sharing the roster](#sharing-the-roster-with-kilo-and-copilot) |
+| `claude/` | Claude Code **global** config (`CLAUDE.md`, `settings.json`), plus `agents/` (the subagent roster, led by the `number-one` orchestrator — generated, see `roster/` below), `skills/` (on-demand procedural knowledge, including the global-vs-project config-scoping convention and the vendored `caveman` output-compression skill), `hooks/` (`PreToolUse` guardrails blocking PR-merge/force-push and AI-attribution lines, the devcontainer guard the other two CLIs defer to, and `rtk-rewrite.sh` for token-saving command rewrites) and `rtk-awareness.md` |
+| `roster/` | Jinja2 templates (`templates/*.md.j2`) and the generator (`render.py`) that produce every file under `claude/agents/`, `kilo/.kilo/agents/` and `copilot/agents/`. `make roster` regenerates them; `make roster-check` (also CI's `agent-spine-drift` job) regenerates and fails on any diff. See [Sharing the roster](#sharing-the-roster-with-kilo-and-copilot) |
 | `kilo/` | Kilo Code global config (`kilo.jsonc`, `tui.jsonc`), plus `plugin/` (a thin shim porting the devcontainer guard to Kilo) and `.kilo/agents/` (the `number-one` orchestrator subagent in Kilo's frontmatter format — the only one of the five ported so far, and Kilo gets no skills wiring at all). `AGENTS.md` is symlinked from `claude/CLAUDE.md` |
-| `copilot/` | GitHub Copilot CLI global config: `settings.json` (the `preToolUse` hook wiring plus `includeCoAuthoredBy: false`), `hooks/` (a shim porting the same devcontainer guard) and `agents/` (the subagent roster hand-translated into Copilot's `*.agent.md` schema — five agents, but not the same five: no provisioning agent, and `devcontainer-reviewer` stands in for the dev-env sign-off half of Claude's `chief-engineer`). `copilot-instructions.md` and `skills/` are symlinked straight from `claude/CLAUDE.md` and `claude/skills/` — same pattern, same source of truth |
+| `copilot/` | GitHub Copilot CLI global config: `settings.json` (the `preToolUse` hook wiring plus `includeCoAuthoredBy: false`), `hooks/` (a shim porting the same devcontainer guard) and `agents/` (the subagent roster, generated into Copilot's `*.agent.md` schema — five agents, but not the same five: no provisioning agent, and `devcontainer-reviewer` stands in for the dev-env sign-off half of Claude's `chief-engineer`). `copilot-instructions.md` and `skills/` are symlinked straight from `claude/CLAUDE.md` and `claude/skills/` — same pattern, same source of truth |
 | `starship/` | Cross-shell prompt config |
 | `tmux/` | `.tmux.conf` with vim-style nav and Catppuccin colours |
 | `ssh/` | `config.template` (rendered to `~/.ssh/config`, no keys) |
@@ -142,9 +143,30 @@ whichever one is driving. What actually crosses the tool boundary today:
 | Global instructions | `claude/CLAUDE.md` | the same file, symlinked as `~/.config/kilo/AGENTS.md` | the same file, symlinked as `~/.copilot/copilot-instructions.md` |
 | Devcontainer guard | `claude/hooks/require-devcontainer.sh` | `kilo/plugin/require-devcontainer.ts` (shim) | `copilot/hooks/require-devcontainer.sh` (shim) |
 | Skills | `claude/skills/` | none | the same directory, symlinked to `~/.copilot/skills` |
-| Subagents | all five | one (`number-one`) | five, hand-translated — no provisioning agent, `devcontainer-reviewer` for sign-off review |
+| Subagents | all five | one (`number-one`) | five, generated (`roster/`) — no provisioning agent, `devcontainer-reviewer` for sign-off review |
 | Never-merge enforcement | `block-pr-merge.sh` + a `permissions.deny` rule | `kilo.jsonc`'s `permission` deny rules | prose in the agent definition only |
 | No AI-attribution trailers | `block-ai-attribution.sh` | prose only | `"includeCoAuthoredBy": false` in `copilot/settings.json` (the CLI defaults this **on**) |
+
+**Every file in the three `agents/` directories above is generated, not hand-maintained.**
+`roster/templates/*.md.j2` holds one Jinja2 template per role; `roster/render.py`
+renders each into its per-tool target(s) listed in `roster/targets.py` — Claude's
+copy is the source of truth, and per-tool variation (frontmatter, tool grants,
+enforcement-mechanism wording, the project-config-path convention) is expressed
+as template variables and conditionals, not as a second file to keep in sync by
+hand. `<!-- PER-TOOL:BEGIN label --> ... <!-- PER-TOOL:END label -->` markers
+still appear in the rendered output of `number-one`'s definition, marking the
+same per-tool variation points they always have — they're cosmetic now (nothing
+parses them at commit time any more) but they keep the rendered files readable
+as a diff against history. Run `make roster` after editing a template; CI's
+`agent-spine-drift` job runs `make roster-check`, which regenerates into memory
+and fails with a per-file diff if a committed file has drifted from its
+template — whether because someone hand-edited a generated file directly, or
+edited a template and forgot to regenerate. This replaced an earlier mechanism
+(a `hooks/pre-commit` spine/marker comparison plus a `tools/sync-agent.sh`
+fixer) that compared two-to-three independently hand-maintained copies for
+byte-identical stretches; with generation, there's nothing left to compare —
+`hooks/pre-commit` now only carries the ABSOLUTE RULE (never-merge) invariant
+check, which is independent of generation on purpose (see that file's header).
 
 Both ports of the devcontainer guard are deliberately **shims**: each translates
 its own tool's hook payload into the shape `claude/hooks/require-devcontainer.sh`
@@ -659,7 +681,19 @@ for the new path.
 dotfiles/
 ├── install.sh          ← Unix entry point (bash/zsh/devcontainer)
 ├── install.ps1         ← Windows entry point (PowerShell)
+├── Makefile             ← `make roster` / `make roster-check`, see roster/ below
 ├── .gitattributes      ← forces LF line endings, even on a fresh Windows clone
+├── roster/
+│   ├── render.py        ← generator: renders templates/*.md.j2 into claude/kilo/copilot agents/
+│   ├── targets.py        ← the roster: which (role, tool) pairs get generated, and where
+│   ├── requirements.txt  ← pinned Jinja2 for CI
+│   └── templates/
+│       ├── number-one.md.j2              ← claude + kilo + copilot
+│       ├── chief-engineer.md.j2          ← claude only
+│       ├── devcontainer-reviewer.md.j2   ← copilot only
+│       ├── duty-officer.md.j2            ← claude + copilot
+│       ├── implementation-engineer.md.j2 ← claude + copilot
+│       └── security-officer.md.j2        ← claude + copilot
 ├── git/
 │   ├── .gitconfig.template  ← rendered (not symlinked) into ~/.gitconfig, see below
 │   ├── .gitignore_global
@@ -670,7 +704,7 @@ dotfiles/
 │   ├── post-checkout
 │   ├── post-merge
 │   ├── post-rewrite
-│   └── pre-commit                ← this repo's own commit-time checks
+│   └── pre-commit                ← ABSOLUTE RULE (never-merge) invariant check, see roster/ above
 ├── shell/
 │   ├── .bashrc
 │   ├── .bash_profile

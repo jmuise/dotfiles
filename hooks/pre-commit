@@ -1,84 +1,58 @@
 #!/usr/bin/env bash
-# Guard against agent-definition drift across the number-one orchestrator's
-# per-CLI copies (Claude, Kilo, Copilot, ...). See tools/sync-agent.sh for
-# the fixer this points users at.
+# Protected-invariant guard for the never-merge boundary that every
+# PR-driving/orchestrating agent definition carries, across every CLI copy
+# (Claude, Kilo, Copilot, ...).
 #
-# Only a "spine" of shared instructions is required to stay byte-identical
-# across all copies; large stretches differ deliberately per tool (fresh-repo
-# provisioning capability, todo-tool availability, the absolute-rule
-# enforcement mechanism, agent-file extension/directory conventions, worker
-# rosters). Those per-tool stretches are wrapped in
-#   <!-- PER-TOOL:BEGIN <label> -->
-#   ...
-#   <!-- PER-TOOL:END <label> -->
-# markers and are exempt from the identity check. Everything NOT inside a
-# marked region is spine and must match byte-for-byte (after stripping YAML
-# frontmatter) across every guarded file.
+# This USED TO also guard "spine" drift — the requirement that everything
+# outside a `<!-- PER-TOOL:BEGIN label --> ... <!-- PER-TOOL:END label -->`
+# region stay byte-identical across every guarded file. That mechanism is
+# retired: the guarded files are now *generated* from roster/templates/ (see
+# roster/render.py), so there is nothing to drift apart — `make roster-check`
+# (wired into CI as the `agent-spine-drift` job, same name as before so
+# branch protection's required check doesn't need updating) regenerates them
+# and diffs against what's committed. `tools/sync-agent.sh`, the marker
+# structural-integrity checker, the pinned per-tool label set, and the
+# degenerate-spine backstop all went with it — see git history if you need
+# the old mechanism's reasoning.
 #
-# IMPORTANT — markers wrap the EXEMPT regions, not the spine, ON PURPOSE.
-# If a marker is ever accidentally dropped from one file, the text it used to
-# shield falls back INTO the checked spine, and the comparison below fires
-# loudly (a real diff, a hard failure). If markers instead wrapped the spine,
-# a dropped marker would silently SHRINK what gets checked — a silent
-# under-firing failure, which is strictly worse than an occasional false
-# positive that just needs a label fixed. Do not "simplify" this by
-# inverting it back to marking the spine.
+# What's left, and still runs on every commit regardless of what it touches:
+# the never-merge invariant below. It is independent of the generation
+# mechanism on purpose. Even though the roster's templates are now the
+# source of truth for these files' *content*, a hand-edit to a generated
+# file (bypassing `make roster`) or a bad template edit could still alter a
+# never-merge paragraph on its way to being committed, and this check catches
+# that at commit time rather than waiting for CI.
 #
-# That argument is only half the story, and the missing half used to be a
-# real hole. Marker DELETION fails loudly, yes — but marker ADDITION is the
-# easier move, and it shrinks the checked spine just as effectively. Both of
-# the following were reproduced against an earlier version of this hook, in
-# an isolated clone, and committed CLEAN (git commit exit 0):
+# Coverage: this used to guard only number-one's three copies. Generation
+# means a single template edit now changes every rendered copy of a role at
+# once, so the same risk (a bad edit silently weakening a never-merge
+# sentence) now applies to every role that carries one, not just number-one.
+# Two mechanisms cover that, deliberately kept pure bash (no Python/Jinja2
+# dependency, since this runs on every commit regardless of whether the
+# roster is touched):
 #
-#   1. A plausible "## Marker syntax example" section added to all three
-#      files, containing a ```markdown fence with a
-#      `PER-TOOL:BEGIN docs-example` / `END docs-example` pair inside it and
-#      DIFFERENT prose in each file's copy. The marker scanners below are
-#      line-oriented and have no notion of Markdown fences, so those were
-#      real regions; the divergent payload (which included the sentence
-#      "this agent MAY merge PRs.") was exempted and never compared.
-#   2. Each file's entire body wrapped in a single `whole-body` region, each
-#      ending with different text. One label per file, so the labels matched;
-#      the spine stripped to EMPTY in all three; the comparison degenerated
-#      to empty-vs-empty and passed.
-#
-# Both worked because the checks below constrained marker STRUCTURE (no
-# nesting, matched BEGIN/END) and cross-file label ORDER, but never HOW MUCH
-# a region may exempt or WHERE it may appear — and because the reference
-# label set was derived from GUARDED_FILES[0], so adding a region to all
-# three files was self-approving.
-#
-# Two defences close that, and both are deliberately annoying:
-#   * EXPECTED_PER_TOOL_LABELS pins the legitimate label set as a constant
-#     in THIS file, so adding or removing a per-tool region is an explicit,
-#     reviewable edit to the guard itself rather than a silent change in the
-#     guarded files. Same coupling, and the same reasoning, as
-#     REQUIRED_ABSOLUTE_RULE_SENTENCES below.
-#   * MIN_SPINE_* floors assert the surviving spine is still substantial, so
-#     the comparison can never degenerate to empty-vs-empty even if some
-#     future arrangement of markers satisfies the pinned label set.
-#
-# NOT fixed, deliberately: these scanners still have no Markdown-fence
-# awareness, so a `PER-TOOL:BEGIN`/`END` pair inside a ``` fenced code block
-# in a guarded file IS treated as a real region. With the label set pinned
-# that can no longer be introduced silently — exploit 1 above now fails the
-# pinned-set check — so fence parsing would be complexity bought for nothing.
-# The documented consequence: you cannot show literal PER-TOOL marker syntax
-# inside a guarded agent definition without it taking effect. Document the
-# syntax here, or in the README, instead.
-#
-# Requires bash 4.0+: this script keys associative arrays (`declare -A`) by
-# guarded-file path to hold each file's staged body, marker labels, and
-# stripped spine (see body_of/labels_of/spine_of below). Do NOT rewrite this
-# to be bash-3.2-compatible to chase macOS's stock /bin/bash — that would
-# mean giving up associative arrays for no benefit on the Captain's actual
-# WSL/Linux setup. Instead the version check immediately below fails loudly,
-# on purpose, before anything that would otherwise die four screens down
-# with a bare `declare: -A: invalid option` and no explanation.
+#   1. Derived heading scan: every file under claude/agents/, kilo/.kilo/agents/
+#      or copilot/agents/ that contains the "## ABSOLUTE RULE — NEVER MERGE"
+#      heading, byte-for-byte, must also contain that role's required
+#      sentences in that section. This is *derived* (a plain grep across the
+#      three roster directories, not a maintained list) specifically so a
+#      new agent that adopts the heading can't silently fall outside the
+#      check — it starts failing the moment it exists, forcing whoever adds
+#      it to also add its required sentences below (see
+#      required_heading_sentences_for).
+#   2. Pinned regression backstop: a fixed list of files known today to
+#      carry a never-merge invariant — either the heading form above, or a
+#      never-merge *paragraph* with no dedicated heading (duty-officer's
+#      "You never edit code, never write files, never commit, never push,
+#      never merge." is inline under "## Scope", not under its own
+#      heading). Derivation alone can't catch the heading (or the paragraph)
+#      being deleted outright, since a deleted heading/paragraph produces
+#      nothing for a grep to find — this list exists specifically to make
+#      that a named, loud failure instead of a silent pass.
 set -euo pipefail
 
 if ((BASH_VERSINFO[0] < 4)); then
-  echo "✖ agent-definition drift guard requires bash 4.0+ (for associative arrays" >&2
+  echo "✖ agent-definition invariant guard requires bash 4.0+ (for associative arrays" >&2
   echo "  keyed by guarded-file path); this shell is bash ${BASH_VERSION:-unknown}." >&2
   echo "  Interpreter in use: $(command -v bash 2>/dev/null || echo 'bash not found on PATH')." >&2
   echo "  This hook is invoked directly by git via its #!/usr/bin/env bash shebang," >&2
@@ -92,114 +66,96 @@ fi
 
 cd "$(git rev-parse --show-toplevel)"
 
-# One entry per guarded file. Add a fourth tool by adding one more line here
-# — nothing else in this script needs to change.
-GUARDED_FILES=(
+# One entry per generated file number-one's own three-copy co-presence
+# invariant is checked in. Kept as its own list (rather than deriving it
+# from roster/targets.py) so this hook has no dependency on Python/Jinja2
+# being installed — it is pure bash, and it runs on every commit, not just
+# ones that touch the roster.
+NUMBER_ONE_GUARDED_FILES=(
   "claude/agents/number-one.md"
   "kilo/.kilo/agents/number-one.md"
   "copilot/agents/number-one.agent.md"
 )
 
-# REMOVED (deliberately): there used to be a short-circuit here that skipped
-# the whole hook — not even a cheap no-op pass — unless `git diff --cached
-# --name-only` literally listed one of GUARDED_FILES. Do not reintroduce
-# that as an "optimisation".
-#
-# It was a bypass: `--name-only` prints only the destination path of a
-# rename, so `git mv claude/agents/number-one.md
-# claude/agents/number-one-v2.md`, edit, `git add -A` produces a diff whose
-# name-only listing is `claude/agents/number-one-v2.md` — which matches
-# nothing in GUARDED_FILES — and the short-circuit let the commit through
-# untouched while removing a guarded file from its canonical path with
-# arbitrary content changes. Rename detection is on by default in git; this
-# is not an edge case, it's the normal path for `git mv`.
-#
-# The original reason for the short-circuit — avoiding spurious failures
-# from a concurrently-running worker's unrelated in-progress edits — no
-# longer applies: that work is finished, and in any case every check below
-# reads the INDEX (`git show ":<path>"`), never the working tree, so a
-# worker's uncommitted edits elsewhere were never actually a hazard here.
-# The whole check below is one small `git show` read per guarded file; the
-# unconditional cost is negligible. Running it on every commit, including
-# ones that don't touch any guarded file, is the fix: it eliminates this
-# entire class of bypass instead of patching one instance of it.
+# Every directory the roster renders generated agent-definition files into.
+# The derived heading scan below walks exactly these, so a new (role, tool)
+# target automatically falls under it without this hook needing an update.
+ROSTER_DIRS=(
+  "claude/agents"
+  "kilo/.kilo/agents"
+  "copilot/agents"
+)
 
-# Required, byte-for-byte, in the "## ABSOLUTE RULE — NEVER MERGE" section
-# of every guarded file. These are load-bearing sentences from the never-
-# merge directive itself, not spine text — they are checked independently
-# of (and in addition to) the spine/marker machinery below, because that
-# machinery's PER-TOOL exempt regions currently wrap the *entire* ABSOLUTE
-# RULE paragraph (see the marker placement in the guarded files themselves),
-# which means an edit confined to that paragraph is invisible to the spine
-# comparison. Re-scoping the markers to exclude these sentences would fix
-# that too, but doing so requires re-flowing the ABSOLUTE RULE's prose, and
-# this repo's standing rules require the Captain's explicit per-change
-# confirmation before that text is touched at all. Absent that confirmation,
-# this hard-coded duplicate check is the fix: it does not touch the ABSOLUTE
-# RULE text or its markers in any of the guarded files.
+ABSOLUTE_RULE_HEADING='## ABSOLUTE RULE — NEVER MERGE'
+
+# Pinned regression backstop (see header comment, mechanism 2). Format is
+# "path:variant", variant one of:
+#   heading   — must contain ABSOLUTE_RULE_HEADING; if it does, its sentences
+#               are already checked by the derived scan, so this entry only
+#               needs to catch the heading having been deleted outright.
+#   paragraph — must contain that role's required sentences somewhere in the
+#               body; there is no dedicated heading to scope the search to.
 #
-# If you are deliberately rewording the never-merge directive with the
-# Captain's sign-off, update these constants in the same commit as the
-# agent-definition edit. That coupling is the point: it turns a silent prose
-# edit into an explicit, reviewable change to the guard itself, instead of a
-# change that only shows up as an opaque hook failure with no explanation.
-REQUIRED_ABSOLUTE_RULE_SENTENCES=(
+# This is a *fixed* list (not derived) on purpose: it exists to catch a
+# regression in a file already known to carry the invariant, so it must not
+# self-update when someone edits the file it's meant to be checking.
+PINNED_NEVER_MERGE_FILES=(
+  "claude/agents/number-one.md:heading"
+  "kilo/.kilo/agents/number-one.md:heading"
+  "copilot/agents/number-one.agent.md:heading"
+  "claude/agents/implementation-engineer.md:heading"
+  "copilot/agents/implementation-engineer.agent.md:heading"
+  "claude/agents/duty-officer.md:paragraph"
+  "copilot/agents/duty-officer.agent.md:paragraph"
+)
+
+# --- required sentences, by role (and, where wording legitimately differs
+# per tool, by tool too) --------------------------------------------------
+#
+# These are load-bearing sentences from each role's never-merge directive
+# itself, required byte-for-byte. This repo's standing rules require the
+# Captain's explicit per-change confirmation before any of this text is
+# touched at all, so a hard-coded duplicate check here turns a silent prose
+# edit into an opaque hook failure that names exactly what changed, instead
+# of passing silently.
+#
+# If you are deliberately rewording a never-merge directive with the
+# Captain's sign-off, update the matching constants below (and the
+# matching roster/templates/*.md.j2) in the same commit as the
+# agent-definition edit. If you are adding a new role's never-merge
+# heading, add its required sentences here in the same commit — the
+# derived scan below will otherwise fail the build the moment the heading
+# exists, by design.
+
+NUMBER_ONE_SENTENCES=(
   'You must **never** run `gh pr merge`, `git merge` into a protected branch on someone'\''s behalf to close out a PR, or instruct any worker subagent to do so.'
   'Do not attempt to route around it (no `gh api`, no raw REST calls, no telling a human-looking script to merge for you).'
   'Every PR'\''s terminal state under your management is "pushed, current, CI-green, and awaiting human review" — full stop.'
 )
 
-ABSOLUTE_RULE_HEADING='## ABSOLUTE RULE — NEVER MERGE'
-
-# The complete, ordered list of PER-TOOL region labels every guarded file is
-# allowed to contain — pinned here rather than derived from one of the
-# guarded files.
-#
-# This used to be derived: the labels of GUARDED_FILES[0] were taken as the
-# reference and the other files were compared against them. That made adding
-# a region self-approving — add the same marker pair to all three files and
-# the reference set grows to match, exempting whatever you put inside from
-# the spine comparison, with no limit and no review signal. See the header
-# comment for the two reproductions.
-#
-# Pinning it here applies exactly the coupling that
-# REQUIRED_ABSOLUTE_RULE_SENTENCES above applies to the never-merge prose:
-# a legitimate new per-tool region is still perfectly possible, but it costs
-# you one extra line in this array, in the same commit, where a reviewer will
-# see it. That is the entire point — the friction is the feature.
-#
-# Labels are opaque frozen identifiers (see extract_marker_labels below);
-# order matters because these are compared as an ordered list.
-EXPECTED_PER_TOOL_LABELS=(
-  'order-1-provisioning'
-  'order-2-task-tracking'
-  'order-7-team'
-  'absolute-rule-body'
-  'delegation-roster'
+# Common to both implementation-engineer tool variants.
+IMPLEMENTATION_ENGINEER_COMMON_SENTENCES=(
+  'Never run `gh pr merge`, never `git merge` into a protected branch to close out a PR, never push directly to `main`/`master`, never enable auto-merge, and never use `gh api` or raw REST calls to achieve any of those.'
+  'The terminal state of your work is **"pushed, current, CI-green, and awaiting human review"** — full stop. Hand off explicitly and stop there.'
 )
+# Claude's copy names the enforcing mechanism (a PreToolUse hook); Copilot
+# has no equivalent hook to name, so its wording is legitimately different
+# here rather than weaker.
+IMPLEMENTATION_ENGINEER_CLAUDE_SENTENCE='This is a hard boundary enforced by a `PreToolUse` hook that will block the command and report the attempt; do not attempt to route around it.'
+IMPLEMENTATION_ENGINEER_COPILOT_SENTENCE='This is an absolute boundary; do not attempt to route around it.'
 
-# Floors on how much body text must survive region-stripping, checked per
-# file. Backstop for the pinned label set above: if some future arrangement
-# of markers ever satisfies EXPECTED_PER_TOOL_LABELS while still swallowing
-# most of the document (five regions laid end to end would do it), the spine
-# comparison would quietly become empty-vs-empty — a check that passes by
-# comparing nothing. These make that a hard failure instead.
-#
-# Both are measured in NON-BLANK lines, so reflowing prose or adding blank
-# lines can't drift a file toward the floor. Observed values at the time
-# these were set, for all three guarded files: 22 non-blank spine lines out
-# of 44-46 non-blank body lines, i.e. 47-50%. The floors are set well below
-# that (roughly half the current headroom) so ordinary growth of a per-tool
-# region does not trip them; they exist to catch degeneracy, not to police
-# the spine/per-tool ratio. If a legitimate edit ever does trip one, that is
-# a signal to check the markers before lowering the number.
-MIN_SPINE_NONBLANK_LINES=15
-MIN_SPINE_BODY_PERCENT=25
+# duty-officer has no dedicated "## ABSOLUTE RULE" heading — its never-merge
+# text is an inline paragraph under "## Scope" — but the sentences are
+# identical across both its tool variants.
+DUTY_OFFICER_SENTENCES=(
+  'You never edit code, never write files, never commit, never push, never merge.'
+  'Never run `gh pr merge`, `git merge` into a protected branch (`main`, `master`, or similarly protected), or any other destructive or state-changing git/gh operation (`git push`, `git reset --hard`, `git clean -f`, `gh pr close`, force operations, etc.). If asked to run one, refuse and report that it'\''s out of scope for a read-only role.'
+)
 
 # --- helpers -----------------------------------------------------------
 
-# Read a guarded file's staged (index) content — i.e. what this commit is
-# about to record — not whatever happens to be sitting in the working tree.
+# Read a file's staged (index) content — i.e. what this commit is about to
+# record — not whatever happens to be sitting in the working tree.
 read_staged() {
   git show ":$1" 2>/dev/null
 }
@@ -208,14 +164,6 @@ read_staged() {
 # very top of the file, through the next `---` line. Everything after that
 # is body, verbatim — including a bare `---` horizontal rule, which is legal
 # Markdown and must not be misread as a second frontmatter delimiter.
-#
-# Chosen fix for the "stray --- truncates/corrupts the body" hazard: scope
-# the delimiter search to the top of the file instead of counting every
-# `---` line in the document (the old `awk '/^---$/{c++;next} c>1'` did the
-# latter, and silently dropped any later bare `---` line from the extracted
-# body instead of comparing it like any other line). None of the currently
-# guarded files has a bare `---` in its body today, but this makes the
-# extraction correct instead of merely lucky.
 strip_frontmatter() {
   awk '
     NR==1 && $0=="---" { infm=1; next }
@@ -223,109 +171,6 @@ strip_frontmatter() {
     infm                { next }
     { print }
   '
-}
-
-# Region labels (e.g. "order-2-task-tracking", "absolute-rule-body",
-# "delegation-roster") are opaque frozen identifiers, not meaningful data.
-# Nothing below ever parses or interprets a label's text — the only thing
-# that matters is that each guarded file's ordered list of labels equals
-# EXPECTED_PER_TOOL_LABELS exactly (checked in step 2, below), which in turn
-# makes the lists identical across files. In particular labels encoding a
-# standing-order number are deliberately NOT renumbered if an order is later
-# inserted or reordered elsewhere in the agent definition; doing so would be
-# pure churn against a check that never reads the number anyway. Don't
-# "clean up" a label to keep it in sync with prose that moved around it.
-#
-# Validate PER-TOOL marker structure for one file's body and print the
-# ordered list of region labels (one per line) on success. Fails loudly on:
-# nesting, interleaving, an END with no BEGIN, or a BEGIN with no END.
-extract_marker_labels() {
-  local file="$1"
-  local -a stack=()
-  local -a labels=()
-  local line label
-
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^\<\!--\ PER-TOOL:BEGIN\ ([A-Za-z0-9_-]+)\ --\>$ ]]; then
-      label="${BASH_REMATCH[1]}"
-      if [ "${#stack[@]}" -gt 0 ]; then
-        # Report the missing END first, because that is overwhelmingly the
-        # actual cause. Deleting an END marker does not surface as "missing
-        # END" — the scan just runs on and trips here at the NEXT BEGIN, so
-        # the older wording ("nested PER-TOOL marker") named a fault the
-        # editor almost certainly did not commit. Genuine nesting (someone
-        # opening a region inside another on purpose) is the rarer reading
-        # and is mentioned second.
-        echo "✖ agent-definition drift guard: PER-TOOL:BEGIN $label in $file opened while" >&2
-        echo "  region '${stack[$((${#stack[@]}-1))]}' is still open." >&2
-        echo "  Most likely: the '<!-- PER-TOOL:END ${stack[$((${#stack[@]}-1))]} -->' line was deleted or altered." >&2
-        echo "  Otherwise: the regions are nested, and PER-TOOL regions must not nest." >&2
-        return 1
-      fi
-      stack+=("$label")
-      labels+=("$label")
-    elif [[ "$line" =~ ^\<\!--\ PER-TOOL:END\ ([A-Za-z0-9_-]+)\ --\>$ ]]; then
-      label="${BASH_REMATCH[1]}"
-      if [ "${#stack[@]}" -eq 0 ]; then
-        # Literally true as stated, but it reads as "you added a stray END"
-        # when the usual cause is the opposite: the BEGIN was deleted, and
-        # this END is the innocent survivor. Name both readings so the
-        # reader looks in the right place.
-        echo "✖ agent-definition drift guard: PER-TOOL:END $label in $file has no open region to close." >&2
-        echo "  Most likely: the '<!-- PER-TOOL:BEGIN $label -->' line was deleted or altered." >&2
-        echo "  Otherwise: this END marker was added without a matching BEGIN." >&2
-        return 1
-      fi
-      local top="${stack[$((${#stack[@]}-1))]}"
-      if [ "$top" != "$label" ]; then
-        echo "✖ agent-definition drift guard: PER-TOOL:END $label in $file does not close the" >&2
-        echo "  currently-open region '$top' — markers are interleaved or out of order." >&2
-        return 1
-      fi
-      unset 'stack[${#stack[@]}-1]'
-    fi
-  done <<<"$2"
-
-  if [ "${#stack[@]}" -gt 0 ]; then
-    echo "✖ agent-definition drift guard: PER-TOOL:BEGIN ${stack[$((${#stack[@]}-1))]} in $file has no matching END." >&2
-    return 1
-  fi
-
-  printf '%s\n' "${labels[@]+"${labels[@]}"}"
-}
-
-# Remove every well-formed PER-TOOL region (markers included) from a body.
-strip_per_tool_regions() {
-  awk '
-    /^<!-- PER-TOOL:BEGIN [A-Za-z0-9_-]+ -->$/ { skip=1; next }
-    /^<!-- PER-TOOL:END [A-Za-z0-9_-]+ -->$/   { skip=0; next }
-    skip { next }
-    { print }
-  '
-}
-
-# Render a list of paths as natural-language prose ("a", "a and b",
-# "a, b, and c", ...). Used so the drift-remediation message below names
-# every target derived from GUARDED_FILES instead of a hardcoded pair —
-# GUARDED_FILES growing to a fourth or fifth entry must not leave that
-# message silently naming only the first two, which is the exact defect
-# class this whole hook exists to catch, reproduced in its own output.
-format_target_list() {
-  local -a items=("$@")
-  local n="${#items[@]}"
-  case "$n" in
-    0) return 0 ;;
-    1) printf '%s' "${items[0]}" ;;
-    2) printf '%s and %s' "${items[0]}" "${items[1]}" ;;
-    *)
-      local out="" i last=$((n - 1))
-      for ((i = 0; i < last; i++)); do
-        out+="${items[i]}, "
-      done
-      out+="and ${items[last]}"
-      printf '%s' "$out"
-      ;;
-  esac
 }
 
 # Print the "## ABSOLUTE RULE — NEVER MERGE" section of a body — the heading
@@ -344,215 +189,187 @@ extract_absolute_rule_section() {
   '
 }
 
-# Assert that every REQUIRED_ABSOLUTE_RULE_SENTENCES entry appears, byte-
-# for-byte, in $file's ABSOLUTE RULE section. This is the dedicated check
-# for Finding 1: it is completely independent of the spine/marker machinery
-# above (no marker parsing, no cross-file comparison) so it fires even when
-# the never-merge paragraph is edited identically across every guarded file,
-# or when the PER-TOOL markers around it are perfectly well-formed. It uses
-# `grep -F` (literal substring match) specifically because the required
-# sentences contain backticks, asterisks, double quotes and an em dash —
-# none of which should ever be interpreted as pattern syntax.
-check_absolute_rule_invariant() {
-  local file="$1" body="$2"
-  local section sentence ok=0
+# Derive (role, tool) from a roster output path. Role is the basename with
+# its tool-specific extension stripped; tool is the top-level directory.
+# This mirrors roster/targets.py's own naming convention without depending
+# on it (see the ROSTER_DIRS comment above for why this stays derived).
+role_for_path() {
+  local base
+  base=$(basename "$1")
+  case "$base" in
+    *.agent.md) echo "${base%.agent.md}" ;;
+    *.md)       echo "${base%.md}" ;;
+    *)          return 1 ;;
+  esac
+}
 
-  if ! section=$(printf '%s\n' "$body" | extract_absolute_rule_section); then
-    echo "✖ agent-definition drift guard: $file has no '## ABSOLUTE RULE — NEVER MERGE' section." >&2
-    echo "  The never-merge boundary is a protected invariant: it cannot be removed by editing" >&2
-    echo "  the agent definition alone." >&2
-    return 1
-  fi
+tool_for_path() {
+  case "$1" in
+    claude/*)  echo "claude" ;;
+    kilo/*)    echo "kilo" ;;
+    copilot/*) echo "copilot" ;;
+    *)         return 1 ;;
+  esac
+}
 
-  for sentence in "${REQUIRED_ABSOLUTE_RULE_SENTENCES[@]}"; do
-    if ! printf '%s\n' "$section" | grep -qF -- "$sentence"; then
-      echo "✖ agent-definition drift guard: $file's ABSOLUTE RULE section is missing or has altered" >&2
+# Print, one per line, the required sentences for $file's ABSOLUTE RULE
+# heading section, given its derived role/tool. Returns nonzero for a role
+# this hook doesn't yet know the required sentences for — see the comment
+# above the sentence constants for why that is a hard failure rather than a
+# silent pass.
+required_heading_sentences_for() {
+  local file="$1" role tool
+  role=$(role_for_path "$file") || return 1
+  tool=$(tool_for_path "$file") || return 1
+  case "$role" in
+    number-one)
+      printf '%s\n' "${NUMBER_ONE_SENTENCES[@]}"
+      ;;
+    implementation-engineer)
+      printf '%s\n' "${IMPLEMENTATION_ENGINEER_COMMON_SENTENCES[@]}"
+      case "$tool" in
+        claude)  printf '%s\n' "$IMPLEMENTATION_ENGINEER_CLAUDE_SENTENCE" ;;
+        copilot) printf '%s\n' "$IMPLEMENTATION_ENGINEER_COPILOT_SENTENCE" ;;
+        *)
+          echo "✖ agent-definition invariant guard: $file carries the ABSOLUTE RULE heading" >&2
+          echo "  for role 'implementation-engineer' under an unrecognized tool ('$tool')." >&2
+          echo "  Add its required sentence to IMPLEMENTATION_ENGINEER_* in hooks/pre-commit." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "✖ agent-definition invariant guard: $file carries the '$ABSOLUTE_RULE_HEADING' heading" >&2
+      echo "  for role '$role', which this hook has no required sentences for." >&2
+      echo "  Add them to hooks/pre-commit (required_heading_sentences_for) in the same commit" >&2
+      echo "  that introduces this role's never-merge heading — do not let it pass unchecked." >&2
+      return 1
+      ;;
+  esac
+}
+
+# Assert that every one of $required (newline-separated) appears, byte-for-
+# byte, in $haystack. Uses `grep -F` (literal substring match) specifically
+# because the required sentences contain backticks, asterisks, double
+# quotes and an em dash — none of which should ever be interpreted as
+# pattern syntax.
+check_required_sentences() {
+  local file="$1" haystack="$2" required="$3" what="$4"
+  local sentence ok=0
+
+  while IFS= read -r sentence; do
+    [ -n "$sentence" ] || continue
+    if ! printf '%s\n' "$haystack" | grep -qF -- "$sentence"; then
+      echo "✖ agent-definition invariant guard: $file's $what is missing or has altered" >&2
       echo "  this required sentence (byte-for-byte match failed):" >&2
       echo "    $sentence" >&2
-      echo "  The never-merge boundary is a protected invariant which cannot be changed by editing" >&2
-      echo "  the agent definition alone — see REQUIRED_ABSOLUTE_RULE_SENTENCES in hooks/pre-commit." >&2
+      echo "  The never-merge boundary is a protected invariant which cannot be changed by" >&2
+      echo "  editing the agent definition alone — see hooks/pre-commit." >&2
       ok=1
     fi
-  done
+  done <<<"$required"
   return "$ok"
 }
 
-# --- 1. load staged content for every guarded file ----------------------
+# --- 1. number-one's own three-copy co-presence invariant ---------------
 
-declare -A body_of
+declare -A number_one_body_of
 missing=0
-for f in "${GUARDED_FILES[@]}"; do
+for f in "${NUMBER_ONE_GUARDED_FILES[@]}"; do
   if ! content=$(read_staged "$f"); then
-    echo "✖ agent-definition drift guard: $f is missing from the index (deleted or never added)." >&2
-    echo "  All of: ${GUARDED_FILES[*]} must exist together." >&2
-    echo "  If retiring one of them is intentional, update GUARDED_FILES in hooks/pre-commit too." >&2
+    echo "✖ agent-definition invariant guard: $f is missing from the index (deleted or never added)." >&2
+    echo "  All of: ${NUMBER_ONE_GUARDED_FILES[*]} must exist together." >&2
+    echo "  If retiring one of them is intentional, update NUMBER_ONE_GUARDED_FILES in hooks/pre-commit too." >&2
     missing=1
     continue
   fi
-  # Known, accepted limitation of the `$(...)` capture here (and of the
-  # matching one for spine_of below): command substitution strips ALL
-  # trailing newlines, so a divergence consisting purely of trailing blank
-  # lines at EOF is invisible to every comparison downstream.
-  #
-  # Left as-is deliberately, after checking how far it reaches. Reproduced
-  # in an isolated clone: appending "\n\n\n" to one file's EOF commits clean,
-  # and so does stripping the final newline off one file. Also reproduced,
-  # and all three BLOCK correctly: trailing SPACES on the last content line,
-  # an extra blank line in the MIDDLE of the spine, and real text appended at
-  # EOF. So the hole is bounded to whitespace that carries no content and
-  # cannot be made to carry any — nothing meaningful can be hidden in it.
-  # Closing it would mean plumbing NUL-delimited capture or temp files
-  # through every helper, which is a lot of contortion for zero real
-  # coverage. Don't.
-  body_of["$f"]=$(printf '%s\n' "$content" | strip_frontmatter)
+  number_one_body_of["$f"]=$(printf '%s\n' "$content" | strip_frontmatter)
 done
 if [ "$missing" -eq 1 ]; then
   exit 1
 fi
 
-# --- 1.5. protected invariant: the never-merge boundary itself -----------
-# Runs unconditionally for every guarded file that made it past the
-# missing-file check above, regardless of PER-TOOL marker validity or spine
-# drift elsewhere in the file. See REQUIRED_ABSOLUTE_RULE_SENTENCES and
-# check_absolute_rule_invariant for why this exists as a standalone check.
 invariant_fail=0
-for f in "${GUARDED_FILES[@]}"; do
-  if ! check_absolute_rule_invariant "$f" "${body_of[$f]}"; then
+
+# --- 2. derived heading scan ---------------------------------------------
+# Every file under ROSTER_DIRS whose staged content contains the ABSOLUTE
+# RULE heading must pass its role's required-sentence check. Derived from
+# the tracked file list, not a maintained list, so a new agent that adopts
+# the heading can't silently fall outside this check (see header comment).
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  content=$(read_staged "$f") || continue
+  body=$(printf '%s\n' "$content" | strip_frontmatter)
+  if ! printf '%s\n' "$body" | grep -qF -- "$ABSOLUTE_RULE_HEADING"; then
+    continue
+  fi
+
+  if [ -n "${number_one_body_of[$f]+set}" ]; then
+    body="${number_one_body_of[$f]}"
+  fi
+
+  section=$(printf '%s\n' "$body" | extract_absolute_rule_section) || {
+    # Contains the heading text somewhere (e.g. in prose) but not as its own
+    # line — extraction failing here despite the earlier grep hit means the
+    # heading isn't a real section marker. Treat as absent/altered.
+    echo "✖ agent-definition invariant guard: $f contains '$ABSOLUTE_RULE_HEADING' text but not" >&2
+    echo "  as its own heading line; the ABSOLUTE RULE section could not be extracted." >&2
+    invariant_fail=1
+    continue
+  }
+
+  required=$(required_heading_sentences_for "$f") || { invariant_fail=1; continue; }
+  if ! check_required_sentences "$f" "$section" "$required" "ABSOLUTE RULE section"; then
     invariant_fail=1
   fi
+done < <(git ls-files -- "${ROSTER_DIRS[@]}")
+
+# --- 3. pinned regression backstop ---------------------------------------
+# Independent of whether the derived scan above found anything for $f: this
+# is what catches the heading (or, for the paragraph variant, the required
+# sentences) having been deleted outright, which produces nothing for a
+# grep-for-the-heading scan to find.
+for entry in "${PINNED_NEVER_MERGE_FILES[@]}"; do
+  f="${entry%%:*}"
+  variant="${entry#*:}"
+
+  if [ -n "${number_one_body_of[$f]+set}" ]; then
+    body="${number_one_body_of[$f]}"
+  else
+    content=$(read_staged "$f") || {
+      echo "✖ agent-definition invariant guard: $f is missing from the index (deleted or never added)," >&2
+      echo "  but is pinned in PINNED_NEVER_MERGE_FILES as a file that must carry a never-merge" >&2
+      echo "  invariant. If retiring it is intentional, update PINNED_NEVER_MERGE_FILES too." >&2
+      invariant_fail=1
+      continue
+    }
+    body=$(printf '%s\n' "$content" | strip_frontmatter)
+  fi
+
+  case "$variant" in
+    heading)
+      if ! printf '%s\n' "$body" | grep -qF -- "$ABSOLUTE_RULE_HEADING"; then
+        echo "✖ agent-definition invariant guard: $f previously carried the" >&2
+        echo "  '$ABSOLUTE_RULE_HEADING' heading and no longer does." >&2
+        echo "  The never-merge boundary is a protected invariant: it cannot be removed by" >&2
+        echo "  editing the agent definition alone." >&2
+        invariant_fail=1
+      fi
+      ;;
+    paragraph)
+      if ! check_required_sentences "$f" "$body" "$(printf '%s\n' "${DUTY_OFFICER_SENTENCES[@]}")" "body"; then
+        invariant_fail=1
+      fi
+      ;;
+    *)
+      echo "✖ agent-definition invariant guard: PINNED_NEVER_MERGE_FILES entry '$entry' has an" >&2
+      echo "  unrecognized variant ('$variant'); expected 'heading' or 'paragraph'." >&2
+      invariant_fail=1
+      ;;
+  esac
 done
+
 if [ "$invariant_fail" -eq 1 ]; then
-  exit 1
-fi
-
-# --- 2. marker structural integrity, then labels against the pinned set --
-
-declare -A labels_of
-struct_fail=0
-for f in "${GUARDED_FILES[@]}"; do
-  if ! labels_out=$(extract_marker_labels "$f" "${body_of[$f]}"); then
-    struct_fail=1
-    continue
-  fi
-  labels_of["$f"]="$labels_out"
-done
-if [ "$struct_fail" -eq 1 ]; then
-  exit 1
-fi
-
-reference_file="${GUARDED_FILES[0]}"
-
-# Compare EVERY file's ordered label list against EXPECTED_PER_TOOL_LABELS,
-# not against GUARDED_FILES[0]'s.
-#
-# This replaces the pairwise cross-file comparison that used to live here
-# (reference file vs each other file). That is not a loss of coverage: if
-# every file's list equals the same pinned constant then they all equal each
-# other, so the pairwise check is strictly subsumed and keeping it would be
-# code that can never fire. What IS gained is the case the pairwise check
-# could never see — all three files agreeing on a label set that nobody
-# approved. Same dropped/reordered/misspelled-marker failures still land
-# here; they just get compared against the constant instead of against
-# whichever file happened to be listed first.
-expected_labels="$(printf '%s\n' "${EXPECTED_PER_TOOL_LABELS[@]}")"
-label_mismatch=0
-for f in "${GUARDED_FILES[@]}"; do
-  if [ "${labels_of[$f]}" != "$expected_labels" ]; then
-    echo "✖ agent-definition drift guard: PER-TOOL region labels in $f do not match the" >&2
-    echo "  set pinned in hooks/pre-commit (a dropped, reordered, misspelled, or newly-added" >&2
-    echo "  marker)." >&2
-    echo "" >&2
-    echo "  Expected (EXPECTED_PER_TOOL_LABELS), in order:" >&2
-    printf '    %s\n' "${EXPECTED_PER_TOOL_LABELS[@]}" >&2
-    echo "  $f has, in order:" >&2
-    # labels_of holds ONE newline-separated string, not an array, so it has
-    # to be indented line-by-line. `printf '    %s\n' "$str"` indents only
-    # the first line and leaves the rest flush left, which is what the
-    # previous version of this message did — it made a six-label list look
-    # like one indented label followed by five stray words.
-    if [ -n "${labels_of[$f]}" ]; then
-      printf '%s\n' "${labels_of[$f]}" | sed 's/^/    /' >&2
-    else
-      echo "    (none)" >&2
-    fi
-    echo "" >&2
-    echo "  If you are deliberately adding or retiring a per-tool region, add or remove" >&2
-    echo "  its label in EXPECTED_PER_TOOL_LABELS in hooks/pre-commit, in this same commit," >&2
-    echo "  and make the marker change in ALL of: ${GUARDED_FILES[*]}." >&2
-    echo "  That edit is meant to be visible to a reviewer — see the header comment for the" >&2
-    echo "  two ways a silently-added region defeated this guard before the set was pinned." >&2
-    label_mismatch=1
-  fi
-done
-if [ "$label_mismatch" -eq 1 ]; then
-  exit 1
-fi
-
-# --- 3. strip exempt regions, compare the spine remainder byte-for-byte -
-
-declare -A spine_of
-for f in "${GUARDED_FILES[@]}"; do
-  # Same trailing-newline caveat as body_of above; see the comment there.
-  spine_of["$f"]=$(printf '%s\n' "${body_of[$f]}" | strip_per_tool_regions)
-done
-
-# Backstop against a degenerate spine: if the exempt regions swallow (nearly)
-# the whole document, the byte-for-byte comparison below still "passes", but
-# it passes by comparing nothing. Measured in non-blank lines, per file, so
-# blank-line churn can't drift a file toward the floor. See MIN_SPINE_* for
-# where the numbers came from.
-degenerate=0
-for f in "${GUARDED_FILES[@]}"; do
-  spine_lines=$(printf '%s\n' "${spine_of[$f]}" | grep -c '[^[:space:]]' || true)
-  body_lines=$(printf '%s\n' "${body_of[$f]}" | grep -c '[^[:space:]]' || true)
-  if [ "$spine_lines" -lt "$MIN_SPINE_NONBLANK_LINES" ]; then
-    echo "✖ agent-definition drift guard: $f's shared spine has collapsed." >&2
-    echo "  Only $spine_lines non-blank line(s) survive PER-TOOL region stripping; at least" >&2
-    echo "  $MIN_SPINE_NONBLANK_LINES are required. A spine this small means the identity check below is" >&2
-    echo "  comparing almost nothing, which passes for the wrong reason." >&2
-    echo "  Check the PER-TOOL markers in $f — a region is exempting far more than it should." >&2
-    degenerate=1
-    continue
-  fi
-  if [ "$body_lines" -gt 0 ] && [ $((spine_lines * 100 / body_lines)) -lt "$MIN_SPINE_BODY_PERCENT" ]; then
-    echo "✖ agent-definition drift guard: $f's PER-TOOL regions exempt too much of the file." >&2
-    echo "  $spine_lines of $body_lines non-blank body lines survive stripping ($((spine_lines * 100 / body_lines))%); at least" >&2
-    echo "  ${MIN_SPINE_BODY_PERCENT}% must remain in the shared spine." >&2
-    echo "  Check the PER-TOOL markers in $f — a region is exempting far more than it should." >&2
-    degenerate=1
-  fi
-done
-if [ "$degenerate" -eq 1 ]; then
-  exit 1
-fi
-
-reference_spine="${spine_of[$reference_file]}"
-drift=0
-for f in "${GUARDED_FILES[@]:1}"; do
-  if [ "${spine_of[$f]}" != "$reference_spine" ]; then
-    echo "✖ agent-definition drift detected between $reference_file and $f" >&2
-    echo "  The shared spine (everything outside a PER-TOOL region, and outside frontmatter)" >&2
-    echo "  must be identical across every guarded file. Diff of the spine remainders" >&2
-    echo "  ($reference_file on the left, $f on the right):" >&2
-    echo "" >&2
-    diff <(printf '%s\n' "$reference_spine") <(printf '%s\n' "${spine_of[$f]}") >&2 || true
-    echo "" >&2
-    drift=1
-  fi
-done
-
-if [ "$drift" -eq 1 ]; then
-  # Every path named here is derived from GUARDED_FILES (element 0 is the
-  # source of truth, the rest are sync targets) rather than hardcoded, so
-  # this message stays correct if a fourth or fifth CLI is ever added there
-  # — see format_target_list above for why that matters.
-  target_list="$(format_target_list "${GUARDED_FILES[@]:1}")"
-  echo "  Fix: edit $reference_file, then run:" >&2
-  echo "    tools/sync-agent.sh" >&2
-  echo "  to propagate the spine into $target_list, preserving each file's own" >&2
-  echo "  frontmatter and its own PER-TOOL regions. If the divergence is inside a" >&2
-  echo "  PER-TOOL region, that's expected and the sync script will leave it alone —" >&2
-  echo "  this failure means the drift is in the shared spine." >&2
   exit 1
 fi
 
