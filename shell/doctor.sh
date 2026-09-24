@@ -37,6 +37,43 @@ doctor() {
     issues=$((issues + 1))
   fi
 
+  # core.hooksPath pointing at a directory that doesn't exist (issue #70): git
+  # silently skips every hook in that case -- no error, no warning -- so a
+  # stale or wrong path (e.g. install.py once repointed the canonical
+  # checkout's hooksPath at a deleted /tmp scratch dir) disarms the
+  # never-merge pre-commit guard and the post-* auto-sync hooks with nothing
+  # to say so. A hook dispatcher can't catch this itself (a hook in a missing
+  # directory never runs to report it), so this has to live somewhere that
+  # runs regardless -- here, at shell start.
+  #
+  # doctor() runs in whatever directory the shell happens to start in, not
+  # necessarily inside the dotfiles checkout, so `git config` alone can't be
+  # trusted to see the right repo. The install receipt (written by
+  # install.py, read the same way hooks/_dispatch.sh reads it for #54)
+  # records which checkout this $HOME was actually installed from -- check
+  # THAT repo's hooksPath explicitly instead of relying on cwd.
+  local receipt dotfiles_dir hooks_path
+  receipt="$HOME/.local/state/dotfiles/install-root"
+  if [[ -f "$receipt" ]]; then
+    dotfiles_dir="$(cat "$receipt" 2>/dev/null || true)"
+    if [[ -n "$dotfiles_dir" && -d "$dotfiles_dir" ]]; then
+      hooks_path="$(git -C "$dotfiles_dir" config --get core.hooksPath 2>/dev/null || true)"
+      if [[ -n "$hooks_path" ]]; then
+        # core.hooksPath may be a relative path (git resolves it against the
+        # working tree root); an absolute one is what install.py writes, but
+        # resolve either case against $dotfiles_dir rather than assume.
+        case "$hooks_path" in
+          /*) : ;;
+          *)  hooks_path="$dotfiles_dir/$hooks_path" ;;
+        esac
+        if [[ ! -d "$hooks_path" ]]; then
+          printf '\033[0;33m⚠\033[0m core.hooksPath (%s) does not exist — git silently skips every hook (including the never-merge pre-commit guard) until this is fixed. Re-run: bash install.sh\n' "$hooks_path"
+          issues=$((issues + 1))
+        fi
+      fi
+    fi
+  fi
+
   # `gh auth token` is a local read (no network call), same check
   # shell/exports.sh uses to populate GH_TOKEN - safe to repeat here.
   if command -v gh &>/dev/null; then
