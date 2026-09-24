@@ -1,62 +1,57 @@
 #!/usr/bin/env python3
 """
-install.py -- shared dotfiles installer core for macOS, Linux, devcontainers, and Windows.
-Called by install.sh and install.ps1; not meant to be run directly.
+install.py -- Layer 2 of the three-layer provisioning split (see issue #35):
+the dotfiles symlink farm. No Ansible dependency. Called by install.sh and
+install.ps1; not meant to be run directly.
+
+Scope, deliberately narrow:
+  * Pure symlinking of this repo's tracked config files into $HOME.
+  * Profile-gated linking of the AI config directories (~/.claude,
+    ~/.config/kilo, ~/.copilot) -- see resolve_ai_gate() below and
+    profile/README.md for the contract.
+  * The install receipt (~/.local/state/dotfiles/install-root), preserved
+    here rather than deleted, because hooks/_dispatch.sh's #54 security fix
+    depends on it naming this checkout. See the "install receipt" section
+    below for the full reasoning.
+  * The git identity / git-credential-manager prerequisite chain that has to
+    run, in order, *before* ~/.gitconfig can be rendered correctly on a
+    fresh machine. See the "git" section below for why this one chunk of
+    otherwise machine-provisioning-shaped code stays here instead of moving
+    to legacy/provision_legacy.py.
+
+Everything else this repo used to do from install.py that is *not* one of
+the above -- package/binary installs, CLI installs, credential-store writes,
+credential-forwarding checks, macOS defaults -- has moved to
+legacy/provision_legacy.py, invoked once near the end of this script. See
+that module's docstring for why it exists and when each chunk it carries is
+expected to go away.
 
 Usage (via wrappers):
     ./install.sh [--dry-run]
     .\\install.ps1 [-DryRun]
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
-import tarfile
-import tempfile
-import urllib.request
-import zipfile
 from pathlib import Path
 
 DOTFILES = Path(__file__).parent.resolve()
 HOME = Path.home()
 
-# Pinned deliberately (supply-chain hygiene — do not switch to an unpinned or
-# caret/range install). Bump by checking `npm view @kilocode/cli version` and
-# updating this constant (used at both @kilocode/cli install call sites below,
-# and mentioned in README.md).
-KILO_CLI_VERSION = "7.4.22"
-
-# Same rationale as KILO_CLI_VERSION above. Bump by checking
-# `npm view @github/copilot version` and updating this constant (used at both
-# @github/copilot install call sites below, and mentioned in README.md).
-COPILOT_CLI_VERSION = "1.0.80"
-
-# Same rationale as KILO_CLI_VERSION above. Bump by checking
-# `npm view @devcontainers/cli version` and updating this constant.
-DEVCONTAINERS_CLI_VERSION = "0.89.0"
-
-# rtk (Rust Token Killer) — installed from the project's own release script.
-# Trust model, strongest link first:
-#   * RTK_INSTALLER_SHA pins install.sh to an immutable commit (a git *tag*
-#     like v0.47.0 is mutable and re-resolved on every fetch — a moved tag
-#     would feed arbitrary script straight into `sh`). Reviewed install.sh
-#     sha256: d6eb73a772903e13ff34ee1be8a8b24e896ba9a978f20d2279a08b4083ea6f77
-#   * That pinned script downloads the rtk binary tarball for RTK_VERSION and
-#     verifies it against the release's checksums.txt before extracting
-#     (expected x86_64-unknown-linux-musl tarball sha256:
-#     7c0175d867f96c4f8f788479af82ca8f0990ea944226268834d224a525186fb7).
-#   * Residual risk: a compromised release could ship a matching tarball +
-#     checksums. Accepted here — this is already stricter than the repo's
-#     other `curl | sh` installs (starship, Claude Code), which pin nothing.
-# Bump both together: pick the `vX.Y.Z` stable tag from
-# https://github.com/rtk-ai/rtk/releases/latest (not a `dev-*-rc` pre-release),
-# set RTK_INSTALLER_SHA to the commit it points at, and refresh the hashes above.
-RTK_VERSION = "v0.47.0"
-RTK_INSTALLER_SHA = "34fe2553192aef5f6ca19944cb52a272a5294c27"
+# ── profile reader ───────────────────────────────────────────────────────────
+# profile/profile.py is the ONE shared implementation of the profile contract
+# (profile/README.md) -- the shell reader, this linker, and Ansible all defer
+# to it rather than each parsing the file themselves. Imported by path, same
+# pattern profile/test_profile.py already uses, and aliased away from the
+# stdlib `profile` module (cProfile-adjacent) that this shadows on sys.path.
+sys.path.insert(0, str(DOTFILES / "profile"))
+import profile as _profile_mod  # noqa: E402  (profile/profile.py, not stdlib `profile`)
 
 # ── args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(add_help=False)
@@ -92,6 +87,60 @@ def link(src: Path, dst: Path) -> bool:
     dst.symlink_to(src)
     success(f"linked {dst}")
     return True
+
+def unlink_gated(dst: Path) -> None:
+    """Remove dst iff it is a symlink pointing INTO this checkout.
+
+    Used when a profile switch narrows and a previously-linked AI config
+    path (~/.claude, ~/.config/kilo, ~/.copilot, or something under one of
+    them) needs to come back out. Deliberately conservative in both
+    directions required by #39: never touches a non-symlink (a user's own
+    real file/directory there is left alone, same as link()'s backup-to-.bak
+    behaviour would suggest, but here there is nothing to install in its
+    place, so there is nothing to even back up), and never touches a
+    symlink that resolves outside this checkout (some other tool's or the
+    user's own symlink, unrelated to dotfiles).
+    """
+    dst = Path(dst)
+    if not dst.is_symlink():
+        return
+    target = dst.readlink()
+    target_abs = target if target.is_absolute() else (dst.parent / target)
+    try:
+        target_abs = target_abs.resolve(strict=False)
+    except OSError:
+        return  # can't resolve -- be conservative, don't touch it
+    dotfiles_resolved = DOTFILES.resolve()
+    inside_repo = target_abs == dotfiles_resolved or dotfiles_resolved in target_abs.parents
+    if not inside_repo:
+        return
+    if DRY_RUN:
+        print(f"  unlink (profile-gated off): {dst} → {target}")
+        return
+    dst.unlink()
+    success(f"unlinked {dst} (profile-gated off)")
+
+def apply_gated_links(action: bool | None, entries) -> None:
+    """Apply the AI-gate tri-state to every (src, dst) pair.
+
+    `action` is the tri-state resolve_ai_gate() returns as its second element,
+    not a plain bool -- do not coerce it with `if action:` at a new call site,
+    that silently collapses `None` (leave alone) into the unlink branch:
+
+      * True  -> link every entry.
+      * False -> unlink every entry (via unlink_gated() -- see its docstring
+        for the safety rules on removal).
+      * None  -> touch NOTHING. This is the invalid-profile state: there is no
+        basis to decide add or remove, so every dst is left exactly as it is
+        on disk, whether that's linked, unlinked, or something else entirely.
+    """
+    if action is None:
+        return
+    for src, dst in entries:
+        if action:
+            link(src, dst)
+        else:
+            unlink_gated(dst)
 
 def render(content: str, dst: Path, marker: str):
     dst = Path(dst)
@@ -138,23 +187,6 @@ def git_credential_fill(protocol, host, username=None):
     except Exception:
         return {}
 
-def git_credential_approve(protocol, host, username, password):
-    inp = f"protocol={protocol}\nhost={host}\nusername={username}\npassword={password}\n"
-    try:
-        subprocess.run(
-            ["git", "-c", "credential.interactive=never", "credential", "approve"],
-            input=inp, capture_output=True, text=True, timeout=10, env=_no_gui_env(),
-        )
-    except Exception:
-        pass
-
-def write_through_symlink(path: Path, content: str):
-    """Write content to path's real target so symlinks aren't replaced by plain files."""
-    real = path.resolve() if path.is_symlink() else path
-    tmp = real.parent / (real.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(real)
-
 # ── context detection ─────────────────────────────────────────────────────────
 def is_devcontainer():
     return any([
@@ -175,9 +207,76 @@ if is_linux:          log("Context: Linux")
 if is_windows:        log("Context: Windows")
 
 IDENTITY_HOST = "dotfiles-identity.local"
-GH_HOST       = "dotfiles-gh.local"
+
+# ── AI profile gating ─────────────────────────────────────────────────────────
+# See profile/README.md for the full contract. Absent file -> agentic
+# (preserves pre-profile behaviour). Invalid file -> hard stop for
+# AI-related linking specifically, never a silent fall-open to agentic and
+# never a silent fall-closed to bare -- the reader's own rule, just enforced
+# here at the point where this linker would otherwise act on it.
+def resolve_ai_gate():
+    """Return (profile_name_or_None, ai_enabled: bool | None).
+
+    profile_name is None iff the profile file is present but invalid, in
+    which case ai_enabled is also None -- a genuine third state, not False --
+    meaning nothing AI-related is linked or unlinked -- whatever is already on
+    disk is left exactly as it is, since an error state gives no basis for
+    deciding what should be there. Every gated call site (apply_gated_links()
+    and the direct unlink_gated() call on copilot_settings_dst) must treat
+    None as "leave alone", distinct from False's "actively unlink" -- collapsing
+    the two by testing `if ai_enabled:` alone is exactly the bug this tri-state
+    exists to prevent from coming back. The caller is responsible for making
+    that failure loud and for making the process exit non-zero once the rest
+    of the (unrelated) linking work is done -- see the bottom of this file.
+    """
+    try:
+        active = _profile_mod.resolve_profile()
+    except _profile_mod.ProfileError as exc:
+        error(f"Invalid dotfiles profile: {exc}")
+        error("Refusing to link OR unlink any AI configuration (~/.claude, "
+              "~/.config/kilo, ~/.copilot) until this is fixed -- leaving "
+              "whatever is currently there untouched. Every other symlink in "
+              "this run still applies normally.")
+        return None, None
+    # Only `agentic` links the full AI config directories today. `inline` is
+    # deliberately conservative (see #39's brief and PR description): this
+    # repo's current ~/.claude / ~/.config/kilo / ~/.copilot layouts don't
+    # cleanly separate "one-shot CLI" files from "agentic roster / skills /
+    # MCP / orchestrator" files (CLAUDE.md, settings.json and hooks/ serve
+    # both concerns at once), so rather than guess at a partial split that
+    # could leak agentic-only capability into `inline`, nothing AI-related is
+    # linked for `inline` yet. #40 (nested profile model + nvim gate) is
+    # expected to define the exact inline asset list; this function is the
+    # single place that decision plugs into.
+    enabled = _profile_mod.profile_at_least(active, "agentic")
+    return active, enabled
+
+ACTIVE_PROFILE, AI_ENABLED = resolve_ai_gate()
+if ACTIVE_PROFILE is not None:
+    log(f"AI profile: {ACTIVE_PROFILE} ({'linking' if AI_ENABLED else 'not linking'} "
+        "~/.claude, ~/.config/kilo, ~/.copilot)")
 
 # ── git ───────────────────────────────────────────────────────────────────────
+# NOTE on scope: everything in this section stays here rather than moving to
+# legacy/provision_legacy.py, even though ensure-gcm.sh and the credential
+# forwarding read below look exactly like the "gcm, credential-forwarding
+# checks" examples #39's brief calls out to relocate. They don't move because
+# they are a genuine prerequisite CHAIN for rendering ~/.gitconfig correctly
+# on a fresh machine in a single pass:
+#   ensure-gcm.sh (a credential.helper must be active)
+#     -> git credential fill (devcontainer identity carry-forward READS it)
+#     -> ~/.gitconfig.local gets its content
+#     -> render() combines the template with that content into ~/.gitconfig
+# legacy/provision_legacy.py is invoked once, near the end of this script
+# (i.e. after linking). Moving any link in this chain there would mean it
+# runs too late to affect *this* run's render() -- a fresh devcontainer's
+# very first install would render ~/.gitconfig without the identity that
+# credential forwarding would otherwise have supplied, and only pick it up
+# on a *second* run. That is a real behaviour regression, not a refactor, so
+# this chain is kept intact. What DOES move is everything that only WRITES
+# to the credential store and that nothing downstream in this same run reads
+# back (the identity/gh-token credential-store seeding) -- see
+# legacy/provision_legacy.py's git-credential section.
 log("Git...")
 link(DOTFILES / "git" / ".gitignore_global", HOME / ".gitignore_global")
 
@@ -247,27 +346,6 @@ effective_email = run("git", "config", "--file", str(HOME / ".gitconfig"), "--ge
 if not effective_name or not effective_email:
     warn("No git identity set — run: git config user.name \"Your Name\" && git config user.email you@example.com "
          "(or edit ~/.gitconfig.local and re-run install).")
-elif not is_devcontainer() and not is_windows:
-    # Push git identity into the credential store under a synthetic host so
-    # devcontainers can pull it via `git credential fill dotfiles-identity.local`.
-    # Skipped on Windows — GCM handles devcontainer credential forwarding natively
-    # and shows interactive dialogs for unrecognised hosts regardless of env flags.
-    if DRY_RUN:
-        print(f"  would write git identity to credential store: host={IDENTITY_HOST} username={effective_name}")
-    else:
-        git_credential_approve("https", IDENTITY_HOST, effective_name, effective_email)
-
-if not is_devcontainer() and not is_windows and shutil.which("gh"):
-    if DRY_RUN:
-        print(f"  would write gh OAuth token to credential store: host={GH_HOST} username=gh-cli (skipping 'gh auth token')")
-    else:
-        gh_token = run("gh", "auth", "token", timeout=10).stdout.strip()
-        if gh_token:
-            git_credential_approve("https", GH_HOST, "gh-cli", gh_token)
-            readback = git_credential_fill("https", GH_HOST, "gh-cli").get("password", "")
-            if readback != gh_token:
-                warn("gh token approve reported success but reading it back didn't match — likely not persisted. "
-                     "Run 'git config --get credential.helper' to check. See secrets/README.md.")
 
 # ── git hooks ─────────────────────────────────────────────────────────────────
 # core.hooksPath is written as the ABSOLUTE path of this checkout's hooks/
@@ -298,19 +376,48 @@ if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
 
 # ── install receipt ──────────────────────────────────────────────────────────
 # Records which checkout this $HOME was deliberately installed from, so
-# hooks/_dispatch.sh can tell a real install from an incidental one. A `git
-# worktree add` shares the primary checkout's .git/config -- including the
-# core.hooksPath just set above -- and since `hooks` is a relative path it
-# resolves inside whichever checkout the hook actually fires from; without
-# this, a branch switch inside a brand-new, possibly-unreviewed worktree would
-# silently install that worktree's content into the real $HOME. Same for
-# `git clone -c core.hooksPath=hooks`, which persists the setting into a
+# hooks/_dispatch.sh can tell a real install from an incidental one.
+#
+# PRESERVED HERE DELIBERATELY -- this is a deviation from #39's literal text
+# ("delete the receipt code"). See "Receipt retained (deviation from #39)" in
+# this PR's description for the full reasoning; in short, hooks/_dispatch.sh
+# (issue #54, PRs #59/#60) refuses hook-triggered installs unless this
+# receipt names the current working tree, and that guard has no replacement
+# yet. Deleting the writer would silently disarm hook auto-sync for every
+# machine that has one, which is a real behaviour change dressed up as a
+# refactor. Issue #30 (Windows receipt-path normalization) stays open and is
+# unaffected by this move.
+#
+# A `git worktree add` shares the primary checkout's .git/config -- including
+# the core.hooksPath just set above -- and since `hooks` is a relative path
+# it resolves inside whichever checkout the hook actually fires from; without
+# this, a branch switch inside a brand-new, possibly-unreviewed worktree
+# would silently install that worktree's content into the real $HOME. Same
+# for `git clone -c core.hooksPath=hooks`, which persists the setting into a
 # fresh clone and fires on its first checkout. The receipt has to live
 # outside the repo (a clone would copy an in-repo marker along with it) and
 # outside .git/config (worktrees share that file), so ~/.local/state is the
 # only location that's both durable and tied to this $HOME rather than to any
 # one checkout. See hooks/_dispatch.sh for the guard that reads this back.
 log("Install receipt...")
+
+def _first_symlinked_ancestor(path: Path, home: Path) -> Path | None:
+    """Return the first symlink at `path` or any ancestor up to `home`.
+
+    None if the ancestry is clean. This is issue #29's ancestry-walk check,
+    kept as a single named helper (rather than inlined) so there is exactly
+    one implementation of it in this file even though there is only one
+    call site today -- a second state-marker write in this script should
+    reuse this rather than re-deriving the walk.
+    """
+    current = path
+    while True:
+        if current.is_symlink():
+            return current
+        if current == home or current.parent == current:
+            return None
+        current = current.parent
+
 if DRY_RUN:
     print(f"  would record install root: {DOTFILES}")
 else:
@@ -325,11 +432,7 @@ else:
     # rest of the tree *inside* the redirected location and the write would
     # then land there undetected, so the check has to walk every component
     # from receipt.parent up to (and including) HOME, and must run before
-    # the mkdir. Same awareness as write_through_symlink() above, applied in
-    # the opposite direction: that helper deliberately follows a symlink
-    # because a user's own dotfile symlinks are meant to be written through;
-    # this receipt has no legitimate reason to ever sit under one, so we
-    # refuse instead.
+    # the mkdir.
     #
     # A symlink anywhere on that path is a warn-and-skip, NOT an abort. The
     # receipt only arms the git-hook auto-sync convenience (see
@@ -337,13 +440,7 @@ else:
     # install -- shell, editors, CLIs, SSH, VS Code and global config all
     # come afterward and must still run. Skipping the write leaves the guard
     # disarmed, which is the safe direction, but the user has to be told.
-    symlinked_component = None
-    for _component in receipt.parents:
-        if _component.is_symlink():
-            symlinked_component = _component
-            break
-        if _component == HOME:
-            break
+    symlinked_component = _first_symlinked_ancestor(receipt.parent, HOME)
     if symlinked_component is not None:
         warn(f"{symlinked_component} is a symlink — NOT writing the install receipt "
              f"through it (an ancestor symlink would redirect the write outside "
@@ -383,201 +480,35 @@ log("Editor...")
 link(DOTFILES / "tools" / "smart-editor.sh", HOME / ".local" / "bin" / "smart-editor")
 
 # ── starship ──────────────────────────────────────────────────────────────────
+# Binary install moved to legacy/provision_legacy.py (Phase 3 packages, #41);
+# only the config symlink is pure Layer 2 linking.
 log("Starship...")
-if is_linux and not shutil.which("starship"):
-    if DRY_RUN:
-        print("  would install starship to ~/.local/bin (curl https://starship.rs/install.sh)")
-    else:
-        local_bin = HOME / ".local" / "bin"
-        local_bin.mkdir(parents=True, exist_ok=True)
-        r = subprocess.run(
-            f"curl -fsSL https://starship.rs/install.sh | sh -s -- --yes -b {local_bin}",
-            shell=True,
-        )
-        if r.returncode != 0:
-            warn("starship install skipped (no curl or offline)")
 link(DOTFILES / "starship" / "starship.toml", HOME / ".config" / "starship.toml")
 
 # ── tmux ──────────────────────────────────────────────────────────────────────
 link(DOTFILES / "tmux" / ".tmux.conf", HOME / ".tmux.conf")
 
 # ── neovim ────────────────────────────────────────────────────────────────────
+# Binary install moved to legacy/provision_legacy.py (Phase 3 packages, #41);
+# only the config symlink is pure Layer 2 linking.
 log("Neovim...")
-if is_linux and not shutil.which("nvim"):
-    if DRY_RUN:
-        print("  would install neovim to ~/.local (GitHub releases tarball)")
-    else:
-        _arch = "x86_64" if platform.machine() == "x86_64" else "arm64"
-        _url  = f"https://github.com/neovim/neovim/releases/latest/download/nvim-linux-{_arch}.tar.gz"
-        log(f"Installing neovim ({_arch})...")
-        try:
-            with tempfile.TemporaryDirectory() as _tmp:
-                _tar = Path(_tmp) / "nvim.tar.gz"
-                urllib.request.urlretrieve(_url, _tar)
-                (HOME / ".local").mkdir(parents=True, exist_ok=True)
-                subprocess.run(
-                    ["tar", "xzf", str(_tar), "--strip-components=1", "-C", str(HOME / ".local")],
-                    check=True,
-                )
-            success("neovim installed")
-        except Exception as _e:
-            warn(f"neovim install skipped: {_e}")
 link(DOTFILES / "nvim", HOME / ".config" / "nvim")
 
 # ── lazygit ───────────────────────────────────────────────────────────────────
+# Binary install moved to legacy/provision_legacy.py (Phase 3 packages, #41);
+# only the config symlink is pure Layer 2 linking.
 log("lazygit...")
-if is_linux and not shutil.which("lazygit"):
-    if DRY_RUN:
-        print("  would install lazygit to ~/.local/bin (GitHub releases)")
-    else:
-        _arch = "x86_64" if platform.machine() == "x86_64" else "arm64"
-        log("Installing lazygit...")
-        try:
-            with urllib.request.urlopen(
-                "https://api.github.com/repos/jesseduffield/lazygit/releases/latest"
-            ) as _r:
-                _ver = json.loads(_r.read())["tag_name"].lstrip("v")
-            _url = (
-                f"https://github.com/jesseduffield/lazygit/releases/download/v{_ver}/"
-                f"lazygit_{_ver}_Linux_{_arch}.tar.gz"
-            )
-            with tempfile.TemporaryDirectory() as _tmp:
-                _tar = Path(_tmp) / "lazygit.tar.gz"
-                urllib.request.urlretrieve(_url, _tar)
-                subprocess.run(["tar", "xzf", str(_tar), "-C", _tmp, "lazygit"], check=True)
-                _bin = HOME / ".local" / "bin"
-                _bin.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(Path(_tmp) / "lazygit"), str(_bin / "lazygit"))
-                (_bin / "lazygit").chmod(0o755)
-            success(f"lazygit v{_ver} installed")
-        except Exception as _e:
-            warn(f"lazygit install skipped: {_e}")
 link(DOTFILES / "lazygit" / "config.yml", HOME / ".config" / "lazygit" / "config.yml")
 
 # ── yazi ──────────────────────────────────────────────────────────────────────
+# Binary install moved to legacy/provision_legacy.py (Phase 3 packages, #41);
+# only the config symlink is pure Layer 2 linking.
 log("yazi...")
-if is_linux and not shutil.which("yazi"):
-    if DRY_RUN:
-        print("  would install yazi to ~/.local/bin (GitHub releases zip)")
-    else:
-        _arch = "x86_64" if platform.machine() == "x86_64" else "aarch64"
-        _zip_name = f"yazi-{_arch}-unknown-linux-musl.zip"
-        _url = f"https://github.com/sxyazi/yazi/releases/latest/download/{_zip_name}"
-        log(f"Installing yazi ({_arch})...")
-        try:
-            with tempfile.TemporaryDirectory() as _tmp:
-                _zippath = Path(_tmp) / "yazi.zip"
-                urllib.request.urlretrieve(_url, _zippath)
-                _bin = HOME / ".local" / "bin"
-                _bin.mkdir(parents=True, exist_ok=True)
-                _prefix = f"yazi-{_arch}-unknown-linux-musl"
-                with zipfile.ZipFile(_zippath) as _zf:
-                    for _name in ("yazi", "ya"):
-                        _member = f"{_prefix}/{_name}"
-                        if _member in _zf.namelist():
-                            (_bin / _name).write_bytes(_zf.read(_member))
-                            (_bin / _name).chmod(0o755)
-            success("yazi installed")
-        except Exception as _e:
-            warn(f"yazi install skipped: {_e}")
 link(DOTFILES / "yazi", HOME / ".config" / "yazi")
 
-# ── Kilo Code CLI ──────────────────────────────────────────────────────────────
-# Installed alongside Claude Code wherever that tool is expected. The dependency
-# is npm (provided by node — in the Brewfile on macOS, in apt.txt on Linux, or
-# preinstalled in devcontainer base images). On Windows, Kilo is not installed
-# natively — powershell/profile.ps1 forwards `kilo` into the WSL distro, same
-# pattern as `claude`.
-log("Kilo Code CLI...")
-if not is_windows and not shutil.which("kilo"):
-    if DRY_RUN:
-        print(f"  would install kilo via: npm install -g @kilocode/cli@{KILO_CLI_VERSION}")
-    else:
-        _npm = shutil.which("npm")
-        if _npm:
-            log("Installing Kilo Code...")
-            _r = subprocess.run([_npm, "install", "-g", f"@kilocode/cli@{KILO_CLI_VERSION}"],
-                                capture_output=True, text=True, timeout=120)
-            if _r.returncode == 0:
-                success("kilo installed")
-            else:
-                warn(f"kilo install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
-        else:
-            warn(f"npm not found — skipping kilo install. Run: npm install -g @kilocode/cli@{KILO_CLI_VERSION}")
-
-# ── GitHub Copilot CLI ───────────────────────────────────────────────────────────
-# Same npm-global pattern as Kilo above. Authenticates automatically from the
-# GH_TOKEN already exported by shell/exports.sh (Copilot CLI checks
-# COPILOT_GITHUB_TOKEN, then GH_TOKEN, then GITHUB_TOKEN) — no separate secrets
-# plumbing needed. On Windows, not installed natively — powershell/profile.ps1
-# forwards `copilot` into the WSL distro, same pattern as `claude`/`kilo`.
-log("GitHub Copilot CLI...")
-if not is_windows and not shutil.which("copilot"):
-    if DRY_RUN:
-        print(f"  would install copilot via: npm install -g @github/copilot@{COPILOT_CLI_VERSION}")
-    else:
-        _npm = shutil.which("npm")
-        if _npm:
-            log("Installing GitHub Copilot CLI...")
-            _r = subprocess.run([_npm, "install", "-g", f"@github/copilot@{COPILOT_CLI_VERSION}"],
-                                capture_output=True, text=True, timeout=120)
-            if _r.returncode == 0:
-                success("copilot installed")
-            else:
-                warn(f"copilot install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
-        else:
-            warn(f"npm not found — skipping copilot install. Run: npm install -g @github/copilot@{COPILOT_CLI_VERSION}")
-
-# ── devcontainer CLI ─────────────────────────────────────────────────────────
-# Same npm-global pattern as Kilo/Copilot above. Backs tools/start-project.sh
-# (the `sp` alias), which builds/starts a project's devcontainer from the
-# terminal the way VS Code's "Reopen in Container" does from its UI.
-log("devcontainer CLI...")
-if not is_windows and not shutil.which("devcontainer"):
-    if DRY_RUN:
-        print(f"  would install devcontainer CLI via: npm install -g @devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}")
-    else:
-        _npm = shutil.which("npm")
-        if _npm:
-            log("Installing devcontainer CLI...")
-            _r = subprocess.run([_npm, "install", "-g", f"@devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}"],
-                                capture_output=True, text=True, timeout=120)
-            if _r.returncode == 0:
-                success("devcontainer CLI installed")
-            else:
-                warn(f"devcontainer CLI install skipped (npm error): {(_r.stderr or '').strip()[:200]}")
-        else:
-            warn(f"npm not found — skipping devcontainer CLI install. Run: npm install -g @devcontainers/cli@{DEVCONTAINERS_CLI_VERSION}")
-
-# ── rtk (Rust Token Killer) ──────────────────────────────────────────────────
-# CLI proxy that filters/compresses command output before it reaches an agent's
-# context. Wired into Claude Code by claude/hooks/rtk-rewrite.sh (registered in
-# claude/settings.json), which transparently rewrites e.g. `git status` to
-# `rtk git status`. No apt/npm package — install from the project's own release
-# script (pinned to a commit via RTK_INSTALLER_SHA; it then downloads and
-# checksum-verifies the RTK_VERSION binary — see the constants block). Lands in
-# ~/.local/bin (already on PATH via shell/exports.sh). Not installed on Windows —
-# powershell/profile.ps1 forwards `rtk` into the WSL distro, same as `claude`.
-log("rtk (Rust Token Killer)...")
-_rtk_url = f"https://raw.githubusercontent.com/rtk-ai/rtk/{RTK_INSTALLER_SHA}/install.sh"
-_rtk_hint = f'curl -fsSL "{_rtk_url}" | RTK_VERSION={RTK_VERSION} sh'
-if not is_windows and not shutil.which("rtk"):
-    if DRY_RUN:
-        print(f"  would install rtk via: {_rtk_hint}")
-    elif shutil.which("curl"):
-        log("Installing rtk...")
-        # Download then run (not `curl | sh`): a failed download must not leave
-        # an empty stdin that `sh` exits 0 on, reporting a phantom success.
-        _r = subprocess.run(
-            f'_t=$(mktemp) && curl -fsSL "{_rtk_url}" -o "$_t" '
-            f'&& RTK_VERSION={RTK_VERSION} sh "$_t"; _rc=$?; rm -f "$_t"; exit $_rc',
-            shell=True, capture_output=True, text=True, timeout=180)
-        if _r.returncode == 0:
-            success("rtk installed")
-        else:
-            warn(f"rtk install skipped (installer error): {(_r.stderr or '').strip()[:200]}")
-    else:
-        warn(f"curl not found — skipping rtk install. Run: {_rtk_hint}")
+# Kilo Code CLI, GitHub Copilot CLI, devcontainer CLI and rtk installs (all
+# npm-global or standalone-binary installs, no linking of their own) moved to
+# legacy/provision_legacy.py -- Phase 3 packages, #41.
 
 log("start-project (sp)...")
 link(DOTFILES / "tools" / "start-project.sh", HOME / ".local" / "bin" / "start-project")
@@ -631,17 +562,19 @@ if not is_devcontainer():
 # ── Claude Code ───────────────────────────────────────────────────────────────
 log("Claude Code global config...")
 claude_dir = HOME / ".claude"
-link(DOTFILES / "claude" / "CLAUDE.md",             claude_dir / "CLAUDE.md")
-link(DOTFILES / "claude" / "settings.json",          claude_dir / "settings.json")
-link(DOTFILES / "claude" / "statusline-command.sh",  claude_dir / "statusline-command.sh")
-link(DOTFILES / "claude" / "agents",                 claude_dir / "agents")
-link(DOTFILES / "claude" / "hooks",                  claude_dir / "hooks")
-link(DOTFILES / "claude" / "skills",                 claude_dir / "skills")
-# rtk's command-rewrite hook (hooks/rtk-rewrite.sh) works with zero context
-# cost, so rtk-awareness.md is deliberately NOT pulled into CLAUDE.md. It's
-# linked here only so `@rtk-awareness.md` resolves on demand for the rtk meta
-# commands (`rtk gain`, `rtk discover`).
-link(DOTFILES / "claude" / "rtk-awareness.md",       claude_dir / "rtk-awareness.md")
+apply_gated_links(AI_ENABLED, [
+    (DOTFILES / "claude" / "CLAUDE.md",             claude_dir / "CLAUDE.md"),
+    (DOTFILES / "claude" / "settings.json",          claude_dir / "settings.json"),
+    (DOTFILES / "claude" / "statusline-command.sh",  claude_dir / "statusline-command.sh"),
+    (DOTFILES / "claude" / "agents",                 claude_dir / "agents"),
+    (DOTFILES / "claude" / "hooks",                  claude_dir / "hooks"),
+    (DOTFILES / "claude" / "skills",                 claude_dir / "skills"),
+    # rtk's command-rewrite hook (hooks/rtk-rewrite.sh) works with zero context
+    # cost, so rtk-awareness.md is deliberately NOT pulled into CLAUDE.md. It's
+    # linked here only so `@rtk-awareness.md` resolves on demand for the rtk meta
+    # commands (`rtk gain`, `rtk discover`).
+    (DOTFILES / "claude" / "rtk-awareness.md",       claude_dir / "rtk-awareness.md"),
+])
 
 # ── Kilo Code ───────────────────────────────────────────────────────────────────
 # Same schema, same structure as the ~/.config/kilo/ directory Kilo itself
@@ -651,18 +584,26 @@ link(DOTFILES / "claude" / "rtk-awareness.md",       claude_dir / "rtk-awareness
 # reading CLAUDE.md and Kilo reading AGENTS.md see the same rules).
 log("Kilo Code global config...")
 kilo_config_dir = HOME / ".config" / "kilo"
-link(DOTFILES / "claude" / "CLAUDE.md",              kilo_config_dir / "AGENTS.md")
-link(DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jsonc")
-link(DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc")
-# Agents must land directly under ~/.config/kilo/agents, NOT nested inside a
-# linked ~/.config/kilo/.kilo/ directory: Kilo (an opencode fork) discovers
-# agents by globbing `{agent,agents}/**/*.md` *inside* each config directory
-# it already knows about, and ~/.config/kilo/ is that directory -- a file at
-# `.kilo/agents/number-one.md` relative to it has ".kilo" as its first path
-# segment, which the glob never matches. Confirmed empirically: linking the
-# whole .kilo/ directory (the old wiring) left `kilo agent list` never
-# mentioning number-one at all, no error, no warning.
-link(DOTFILES / "kilo" / ".kilo" / "agents",         kilo_config_dir / "agents")
+apply_gated_links(AI_ENABLED, [
+    (DOTFILES / "claude" / "CLAUDE.md",              kilo_config_dir / "AGENTS.md"),
+    (DOTFILES / "kilo" / "kilo.jsonc",               kilo_config_dir / "kilo.jsonc"),
+    (DOTFILES / "kilo" / "tui.jsonc",                kilo_config_dir / "tui.jsonc"),
+    # Agents must land directly under ~/.config/kilo/agents, NOT nested inside a
+    # linked ~/.config/kilo/.kilo/ directory: Kilo (an opencode fork) discovers
+    # agents by globbing `{agent,agents}/**/*.md` *inside* each config directory
+    # it already knows about, and ~/.config/kilo/ is that directory -- a file at
+    # `.kilo/agents/number-one.md` relative to it has ".kilo" as its first path
+    # segment, which the glob never matches. Confirmed empirically: linking the
+    # whole .kilo/ directory (the old wiring) left `kilo agent list` never
+    # mentioning number-one at all, no error, no warning.
+    (DOTFILES / "kilo" / ".kilo" / "agents",         kilo_config_dir / "agents"),
+    # Plugin directory must be a real symlink, not just a config-file reference:
+    # kilo.jsonc's `plugin` array resolves relative paths against the *literal*
+    # path of the config file (this symlink target's parent), not its realpath,
+    # so without this the require-devcontainer plugin would silently fail to load
+    # -- confirmed empirically, no error, no log line, the hook just never fires.
+    (DOTFILES / "kilo" / "plugin",                   kilo_config_dir / "plugin"),
+])
 # `commands/` holds only a `.gitkeep` today (no real command files), so it is
 # deliberately NOT linked here yet -- Kilo's command glob also wants a
 # top-level `commands/` (confirmed: `{command,commands}/**/*.md`), so wire it
@@ -671,7 +612,9 @@ link(DOTFILES / "kilo" / ".kilo" / "agents",         kilo_config_dir / "agents")
 # The pre-fix wiring above also symlinked kilo/.kilo/ wholesale, which is why
 # ~/.config/kilo/.kilo may still exist as a leftover from before this fix;
 # clean up only that exact stale symlink, never anything else that might be
-# sitting at that path.
+# sitting at that path. Runs regardless of AI_ENABLED -- it only ever REMOVES
+# one specific known-stale link, the same safety rule apply_gated_links'
+# unlink_gated() enforces elsewhere in this file.
 _stale_dot_kilo_link = kilo_config_dir / ".kilo"
 if _stale_dot_kilo_link.is_symlink() and _stale_dot_kilo_link.readlink() == DOTFILES / "kilo" / ".kilo":
     if DRY_RUN:
@@ -679,12 +622,6 @@ if _stale_dot_kilo_link.is_symlink() and _stale_dot_kilo_link.readlink() == DOTF
     else:
         _stale_dot_kilo_link.unlink()
         success(f"removed stale link {_stale_dot_kilo_link}")
-# Plugin directory must be a real symlink, not just a config-file reference:
-# kilo.jsonc's `plugin` array resolves relative paths against the *literal*
-# path of the config file (this symlink target's parent), not its realpath,
-# so without this the require-devcontainer plugin would silently fail to load
-# -- confirmed empirically, no error, no log line, the hook just never fires.
-link(DOTFILES / "kilo" / "plugin",                   kilo_config_dir / "plugin")
 
 # ── GitHub Copilot CLI ───────────────────────────────────────────────────────────
 # Same one-source-of-truth pattern as Kilo above — Copilot CLI reads global
@@ -695,7 +632,6 @@ link(DOTFILES / "kilo" / "plugin",                   kilo_config_dir / "plugin")
 # copilot/.
 log("GitHub Copilot CLI global config...")
 copilot_dir = HOME / ".copilot"
-link(DOTFILES / "claude" / "CLAUDE.md",      copilot_dir / "copilot-instructions.md")
 
 def strip_jsonc_line_comments(text: str) -> str:
     """Drop whole-line `//` comments so json can parse copilot/settings.json.
@@ -858,143 +794,70 @@ def report_detached_copilot_settings(src: Path, dst: Path) -> None:
                  f" loses nothing but CLI-side formatting (a copy lands in {dst.name}.bak).")
 
 copilot_settings_src = DOTFILES / "copilot" / "settings.json"
-# UNCONDITIONAL, EVERY RUN, BEFORE THE LINK. A settings.json the CLI cannot parse
-# turns the devcontainer guard off with no warning of any kind (see the function's
-# docstring), so the only place that can be caught is here. Gate the symlink on it:
-# installing a file we know is broken would be actively worse than leaving the
-# previous one in place.
-copilot_settings_ok = check_copilot_settings_parse(copilot_settings_src)
-report_detached_copilot_settings(copilot_settings_src, copilot_dir / "settings.json")
-# Hooks must be configured in settings.json, NOT config.json. Put them in
-# config.json and they appear to work exactly once, after which the CLI migrates
-# them out, logs `Settings migration: "hooks" differs...` and deletes them --
-# leaving the devcontainer guard silently gone with nothing to notice. Copilot
-# says as much in config.json's own header ("User settings belong in
-# settings.json", "This file is managed automatically"), so config.json is
-# deliberately left alone here and never symlinked.
-#
-# This link is also the REPAIR for the detached case reported just above, not only
-# a first-install step: it is the only thing that reattaches the live config to
-# this repo after the CLI has rewritten it. Re-run install.py whenever
-# `ls -l ~/.copilot/settings.json` shows a regular file instead of a symlink.
-if copilot_settings_ok:
-    link(copilot_settings_src, copilot_dir / "settings.json")
-else:
-    error(f"SKIPPED linking {copilot_dir / 'settings.json'} — see the errors above.")
-# The hooks directory symlink is load-bearing, not cosmetic -- same class of trap
-# as Kilo's plugin dir above. copilot/settings.json invokes the guard as
-# `bash "$HOME/.copilot/hooks/require-devcontainer.sh"` (Copilot does expand
-# $HOME inside a hook command -- verified empirically, it is undocumented), so
-# without this link the script simply is not there and the guard never fires:
-# no error, no log line, just an unguarded session.
-link(DOTFILES / "copilot" / "hooks",         copilot_dir / "hooks")
-# Personal custom agents -- Copilot discovers them as ~/.copilot/agents/*.agent.md.
-link(DOTFILES / "copilot" / "agents",        copilot_dir / "agents")
-# Skills point at claude/skills deliberately: the SAME source of truth Claude
-# Code uses, not a copy. Copilot reads SKILL.md in the identical format, and a
-# whole-directory symlink here was confirmed to list every skill under "Personal
-# skills" in a live session and to actually load them. Same reasoning as
-# copilot-instructions.md above and Kilo's AGENTS.md -- one file, both tools.
-link(DOTFILES / "claude" / "skills",         copilot_dir / "skills")
-
-# ── devcontainer extras ───────────────────────────────────────────────────────
-if is_devcontainer():
-    log("Devcontainer extras...")
-
-    if not shutil.which("claude") and not DRY_RUN:
-        log("Installing Claude Code in container...")
-        if subprocess.run("curl -fsSL https://claude.ai/install.sh | bash", shell=True).returncode != 0:
-            warn("Claude Code install skipped (no curl or offline)")
-
-    if not shutil.which("kilo") and not DRY_RUN:
-        log("Installing Kilo Code in container...")
-        if subprocess.run(f"npm install -g @kilocode/cli@{KILO_CLI_VERSION}", shell=True).returncode != 0:
-            warn("Kilo Code install skipped (no npm or offline)")
-
-    if not shutil.which("copilot") and not DRY_RUN:
-        log("Installing GitHub Copilot CLI in container...")
-        if subprocess.run(f"npm install -g @github/copilot@{COPILOT_CLI_VERSION}", shell=True).returncode != 0:
-            warn("GitHub Copilot CLI install skipped (no npm or offline)")
-
-    if not shutil.which("gh") and not DRY_RUN:
-        log("Installing gh in container...")
-        r = subprocess.run(
-            "sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gh",
-            shell=True,
-        )
-        if r.returncode != 0:
-            warn("gh install skipped (no sudo/network, offline, or not in this image's apt sources)")
-
-    if DRY_RUN:
-        print("  would check/install delta (git/ensure-delta.sh)")
+copilot_settings_dst = copilot_dir / "settings.json"
+if AI_ENABLED is None:
+    # Invalid profile: the tri-state's "leave alone" state -- same rule as
+    # apply_gated_links(None, ...) below. No basis to decide add or remove, so
+    # this destination is not touched at all, not even the unlink branch.
+    copilot_settings_ok = True  # not a parse failure -- nothing evaluated by design
+elif AI_ENABLED:
+    # UNCONDITIONAL, EVERY RUN, BEFORE THE LINK. A settings.json the CLI cannot parse
+    # turns the devcontainer guard off with no warning of any kind (see the function's
+    # docstring), so the only place that can be caught is here. Gate the symlink on it:
+    # installing a file we know is broken would be actively worse than leaving the
+    # previous one in place.
+    copilot_settings_ok = check_copilot_settings_parse(copilot_settings_src)
+    report_detached_copilot_settings(copilot_settings_src, copilot_settings_dst)
+    # This link is also the REPAIR for the detached case reported just above, not only
+    # a first-install step: it is the only thing that reattaches the live config to
+    # this repo after the CLI has rewritten it. Re-run install.py whenever
+    # `ls -l ~/.copilot/settings.json` shows a regular file instead of a symlink.
+    if copilot_settings_ok:
+        link(copilot_settings_src, copilot_settings_dst)
     else:
-        subprocess.run(["bash", str(DOTFILES / "git" / "ensure-delta.sh")], check=True)
+        error(f"SKIPPED linking {copilot_settings_dst} — see the errors above.")
+else:
+    copilot_settings_ok = True  # not applicable at this profile -- nothing installed by design
+    unlink_gated(copilot_settings_dst)
 
-    CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", str(HOME / ".cache"))) / "dotfiles"
-    SENTINEL  = CACHE_DIR / "claude-token.configured"
+apply_gated_links(AI_ENABLED, [
+    (DOTFILES / "claude" / "CLAUDE.md",      copilot_dir / "copilot-instructions.md"),
+    # The hooks directory symlink is load-bearing, not cosmetic -- same class of trap
+    # as Kilo's plugin dir above. copilot/settings.json invokes the guard as
+    # `bash "$HOME/.copilot/hooks/require-devcontainer.sh"` (Copilot does expand
+    # $HOME inside a hook command -- verified empirically, it is undocumented), so
+    # without this link the script simply is not there and the guard never fires:
+    # no error, no log line, just an unguarded session.
+    (DOTFILES / "copilot" / "hooks",         copilot_dir / "hooks"),
+    # Personal custom agents -- Copilot discovers them as ~/.copilot/agents/*.agent.md.
+    (DOTFILES / "copilot" / "agents",        copilot_dir / "agents"),
+    # Skills point at claude/skills deliberately: the SAME source of truth Claude
+    # Code uses, not a copy. Copilot reads SKILL.md in the identical format, and a
+    # whole-directory symlink here was confirmed to list every skill under "Personal
+    # skills" in a live session and to actually load them. Same reasoning as
+    # copilot-instructions.md above and Kilo's AGENTS.md -- one file, both tools.
+    (DOTFILES / "claude" / "skills",         copilot_dir / "skills"),
+])
 
-    if not SENTINEL.exists() and shutil.which("git") and not DRY_RUN:
-        log("Checking Claude Code credential forwarding...")
-        creds = git_credential_fill("https", "dotfiles-secrets.local", "claude-code")
-        forwarded = creds.get("password", "")
-        if forwarded:
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            SENTINEL.touch()
-            log("Credential forwarding confirmed — CLAUDE_CODE_OAUTH_TOKEN will be exported automatically in new shells.")
-            if shutil.which("jq"):
-                claude_json = HOME / ".claude.json"
-                if not claude_json.exists():
-                    claude_json.write_text("{}", encoding="utf-8")
-                r = subprocess.run(["jq", ".hasCompletedOnboarding = true", str(claude_json)],
-                                   capture_output=True, text=True)
-                if r.returncode == 0:
-                    write_through_symlink(claude_json, r.stdout)
-                settings_json = claude_dir / "settings.json"
-                real_settings = settings_json.resolve() if settings_json.is_symlink() else settings_json
-                if not real_settings.exists():
-                    real_settings.write_text("{}", encoding="utf-8")
-                r2 = subprocess.run(["jq", '.theme = "light-daltonized"', str(real_settings)],
-                                    capture_output=True, text=True)
-                if r2.returncode == 0:
-                    write_through_symlink(real_settings, r2.stdout)
-                log("Claude Code onboarding (login picker + theme) pre-configured.")
-            else:
-                warn("jq not found — skipping Claude Code onboarding pre-configuration.")
-        else:
-            warn("Credential forwarding not confirmed for Claude Code token — new shells won't export it automatically. "
-                 "See secrets/README.md.")
-
-    GH_SENTINEL = CACHE_DIR / "gh-token.configured"
-    if not GH_SENTINEL.exists() and shutil.which("git") and not DRY_RUN:
-        log("Checking gh credential forwarding...")
-        gh_creds = git_credential_fill("https", GH_HOST, "gh-cli")
-        if gh_creds.get("password"):
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            GH_SENTINEL.touch()
-            log("gh credential forwarding confirmed — GH_TOKEN will be exported automatically in new shells.")
-        else:
-            warn("Credential forwarding not confirmed for gh token — new shells won't export GH_TOKEN automatically. "
-                 "Run 'gh auth login' on the host and rebuild, or inside this container directly. See secrets/README.md.")
-
-    OPENROUTER_HOST = "dotfiles-openrouter.local"
-    OPENROUTER_SENTINEL = CACHE_DIR / "openrouter-token.configured"
-    if not OPENROUTER_SENTINEL.exists() and shutil.which("git") and not DRY_RUN:
-        log("Checking OpenRouter credential forwarding...")
-        or_creds = git_credential_fill("https", OPENROUTER_HOST, "openrouter")
-        if or_creds.get("password"):
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            OPENROUTER_SENTINEL.touch()
-            log("OpenRouter credential forwarding confirmed — OPENROUTER_API_KEY will be exported automatically in new shells.")
-        else:
-            warn("Credential forwarding not confirmed for OpenRouter key — new shells won't export OPENROUTER_API_KEY automatically. "
-                 "See secrets/README.md.")
-
-# ── macOS system defaults ─────────────────────────────────────────────────────
-if is_macos and not is_devcontainer():
-    defaults_sh = DOTFILES / "macos" / "defaults.sh"
-    if defaults_sh.exists():
-        log("macOS defaults...")
-        subprocess.run(["bash", str(defaults_sh)], check=True)
+# ── legacy machine-state provisioning ─────────────────────────────────────────
+# Everything that is package/CLI installs, credential-store seeding,
+# credential-forwarding checks, or macOS defaults -- i.e. not linking -- lives
+# in legacy/provision_legacy.py now, invoked here as a single step AFTER all
+# of the above linking. See that module's docstring for the full inventory
+# and which Phase 3 (#41-#45) issue is expected to retire each chunk. This
+# call preserves a real dependency the pre-split script had: if this step
+# fails hard (matching subprocess check=True calls the original script also
+# had), install.py stops here too, before printing "Done!" -- same as the
+# original single-process script would have via an uncaught exception.
+log("Legacy machine-state provisioning (see legacy/provision_legacy.py)...")
+_legacy_cmd = [sys.executable, str(DOTFILES / "legacy" / "provision_legacy.py")]
+if DRY_RUN:
+    _legacy_cmd.append("--dry-run")
+_legacy_rc = subprocess.run(_legacy_cmd).returncode
+if _legacy_rc != 0:
+    error(f"legacy/provision_legacy.py exited {_legacy_rc} — stopping before completion, "
+          "same as the pre-split installer would have on this failure.")
+    sys.exit(_legacy_rc)
 
 if shell_changed:
     success("Done! Shell config changed -- open a new shell or: source ~/.zshrc (or ~/.bashrc)")
@@ -1003,8 +866,15 @@ else:
 
 # Restated last, on purpose. A broken copilot/settings.json silently disables the
 # devcontainer guard, and an error a few hundred lines up the scrollback is an
-# error nobody reads. Non-zero exit so a caller (or CI) notices too.
+# error nobody reads. Non-zero exit so a caller (or CI) notices too. Same
+# treatment for an invalid profile file -- see resolve_ai_gate() above.
+_exit_code = 0
 if not copilot_settings_ok:
     error("copilot/settings.json did NOT parse and was not installed — the Copilot"
           " devcontainer guard is not wired up. Fix it and re-run this script.")
-    sys.exit(1)
+    _exit_code = 1
+if ACTIVE_PROFILE is None:
+    error(f"{_profile_mod.profile_path()} holds an invalid profile — AI configuration"
+          " was left untouched (neither linked nor unlinked). Fix it and re-run this script.")
+    _exit_code = 1
+sys.exit(_exit_code)

@@ -13,9 +13,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Syntax-only gate: no interpreter runs the code, it is only parsed.
-  # Covers the Python installer core and every tracked shell script,
-  # including the extensionless git hooks.
+  # Syntax gate for the shell scripts (bash -n, parse-only) plus two small,
+  # hermetic Python checks: py_compile for install.py and
+  # legacy/provision_legacy.py, and tests/test_install_ai_gate.py, which actually
+  # RUNS install.py (for real, against a throwaway scratch copy -- see that
+  # file's docstring) to regression-test the AI-profile gate's tri-state
+  # (invalid profile = leave-alone, not a silent unlink) fixed as part of
+  # PR #64's security review.
   shell-python-syntax:
     name: shell-python-syntax
     runs-on: ubuntu-latest
@@ -24,6 +28,12 @@ jobs:
 
       - name: python -m py_compile install.py
         run: python3 -m py_compile install.py
+
+      - name: python -m py_compile legacy/provision_legacy.py
+        run: python3 -m py_compile legacy/provision_legacy.py
+
+      - name: python3 tests/test_install_ai_gate.py (AI-gate tri-state regression)
+        run: python3 tests/test_install_ai_gate.py -v
 
       - name: bash -n on every tracked shell script
         run: |
