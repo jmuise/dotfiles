@@ -1,0 +1,57 @@
+---
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  UNVERIFIED ON macOS.                                                     │
+# │  No Mac is reachable from the environment this role was written in, so   │
+# │  nothing below has ever actually run against a real System Preferences   │
+# │  store. Verified here: --syntax-check, ansible-lint (production          │
+# │  profile), that this role is skipped cleanly on non-Darwin hosts, and    │
+# │  `ansible-doc community.general.osx_defaults` for parameter shapes. The  │
+# │  first person with a Mac should run `site.yml --check --diff`, then a    │
+# │  real run, then compare `defaults read <domain> <key>` against every     │
+# │  value below (see roles/macos/README.md and the retirement-gate issue). │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# 1:1 conversion of macos/defaults.sh to community.general.osx_defaults, split
+# by the same section headers the shell script uses. Each task file's name
+# matches: finder.yml, dock.yml, keyboard.yml, trackpad.yml, screenshots.yml,
+# safari.yml, activity_monitor.yml. See roles/macos/README.md for the full
+# line-by-line mapping table.
+#
+# macos/defaults.sh and the "macOS system defaults" section of
+# legacy/provision_legacy.py (tagged "Retires with: #42") are deliberately
+# left in place and untouched -- retirement is gated on a verified run on
+# real hardware, tracked in a separate issue. See README.md -> "Retirement".
+
+- name: Close System Preferences (prevents it overriding writes below)
+  # Converted from `osascript -e 'tell application "System Preferences" to
+  # quit' 2>/dev/null || true`. Unconditional preparation, not a
+  # change-notified side effect, so it stays a plain task rather than a
+  # handler. `command` has no check_mode support, so --check skips this
+  # automatically; `failed_when: false` mirrors the original `|| true`
+  # (System Preferences may simply not be running).
+  ansible.builtin.command:
+    cmd: >-
+      osascript -e 'tell application "System Preferences" to quit'
+  changed_when: false
+  failed_when: false
+
+- name: Finder preferences
+  ansible.builtin.import_tasks: finder.yml
+
+- name: Dock preferences
+  ansible.builtin.import_tasks: dock.yml
+
+- name: Keyboard preferences
+  ansible.builtin.import_tasks: keyboard.yml
+
+- name: Trackpad preferences
+  ansible.builtin.import_tasks: trackpad.yml
+
+- name: Screenshot preferences
+  ansible.builtin.import_tasks: screenshots.yml
+
+- name: Safari (dev) preferences
+  ansible.builtin.import_tasks: safari.yml
+
+- name: Activity Monitor preferences
+  ansible.builtin.import_tasks: activity_monitor.yml

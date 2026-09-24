@@ -1,0 +1,30 @@
+---
+# Converted from the unconditional `for app in Finder Dock SystemUIServer;
+# do killall "$app" ...; done` at the end of macos/defaults.sh. Handlers only
+# fire when a task above actually notifies them (i.e. a preference genuinely
+# changed), which is strictly narrower than the original script's "always
+# restart all three" -- see roles/macos/README.md -> "Handler mapping" for
+# which task file notifies which handler and why.
+#
+# `command`/`killall` has no check_mode support, so Ansible skips these
+# automatically under --check -- nothing here needs an explicit check_mode
+# guard for that reason. `failed_when: false` mirrors the original script's
+# `killall "$app" 2>/dev/null || true` (the app may simply not be running).
+
+- name: Restart Finder
+  ansible.builtin.command:
+    cmd: killall Finder
+  changed_when: true
+  failed_when: false
+
+- name: Restart Dock
+  ansible.builtin.command:
+    cmd: killall Dock
+  changed_when: true
+  failed_when: false
+
+- name: Restart SystemUIServer
+  ansible.builtin.command:
+    cmd: killall SystemUIServer
+  changed_when: true
+  failed_when: false
