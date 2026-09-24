@@ -6,10 +6,17 @@ This directory defines **one** thing: the format and meaning of the file
 ${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/profile
 ```
 
-and ships a small reader for it that every consumer shares. It does **not**
-wire any consumer up — the shell gate, the Python linker, the nvim
-`copilot.lua` gate and the `dotfiles profile <name>` CLI are all separate,
-later tasks. This is the contract and the parser, nothing downstream.
+and ships a small reader for it that every consumer shares. This file
+documents the contract and the parser; the consumers that wire it up (the
+shell gate, the Python linker, the nvim `copilot.lua` gate, and the
+`dotfiles profile <name>` CLI) live where each of them naturally belongs:
+
+| Consumer | Lives at |
+|----------|----------|
+| Python linker (`install.py`) | repo root, imports `profile/profile.py` |
+| Ansible (`provision/site.yml`) | shells out to `profile/profile.py`, see below |
+| `dotfiles profile [<name>]` CLI | `tools/dotfiles.py`, linked to `~/.local/bin/dotfiles` |
+| nvim `copilot.lua` gate | `nvim/lua/config/profile.lua` + `nvim/lua/plugins/copilot.lua` -- **a documented exception to "no third parser," see below** |
 
 ## Why this file exists
 
@@ -156,6 +163,36 @@ out to the Python reader and consumes its stdout / return code:
   when: ...
 ```
 
+### The nvim gate: a narrow, documented exception
+
+`nvim/lua/config/profile.lua` (added in #40) is a **fourth** implementation
+of a *subset* of this contract, not a violation of "no third parser" slipped
+in quietly. lazy.nvim evaluates every plugin spec's `cond` synchronously, on
+every `nvim` startup, before the UI is usable — shelling out to
+`python3 profile/profile.py --at-least inline` from there would add a whole
+Python interpreter fork+exec to every editor launch for a check pure Lua
+answers in microseconds, and would make a plugin gate hard-depend on python3
+being on `PATH` at all. The exception is kept narrow on purpose:
+
+* It feeds exactly **one boolean** (`M.at_least(tier)`, consumed by
+  `nvim/lua/plugins/copilot.lua`'s `cond`) — it is never used to *write* the
+  profile file, and nothing else in this repo imports it.
+* It **fails closed**: absent file → `agentic` (rule 1, same as the other
+  two readers), but anything it can't cleanly resolve to one of
+  `bare`/`inline`/`agentic` (empty, multi-token, unreadable, not a plain
+  file) is treated as invalid → `copilot.lua` does not load, and a warning
+  is printed via `vim.notify`. It does not distinguish *why* a file is
+  invalid the way `profile.py`/`profile.sh` do (their separate messages for
+  "empty" vs "multi-token" vs "bad UTF-8" collapse here) — every one of
+  those cases has exactly one Lua-side consumer, and they would all resolve
+  to the same outcome regardless, so there is nothing to gain by keeping the
+  distinctions apart on the way in.
+* Because of the previous point, this reader can only ever be **stricter**
+  than `profile.py`/`profile.sh`, never more permissive — it has no case
+  that accepts something the real readers would reject, so it cannot
+  silently load an AI plugin the contract says should be off. Full detail
+  and the case-by-case contract mapping live in the module's own docstring.
+
 ## Security: symlink-ancestry check on write
 
 Established by issue #29 for this repo: any state-marker file that gets
@@ -165,8 +202,8 @@ at, say, `~/.config` (or `~/.config/dotfiles`) that redirects the write to an
 arbitrary file the attacker chooses.
 
 The `profile` file is exactly such a state marker — it is written by the
-future `dotfiles profile <name>` CLI (task 2d), which will call
-`write_profile()` here. So `write_profile()`:
+`dotfiles profile <name>` CLI (`tools/dotfiles.py`, #40), which calls
+`write_profile()` here and nowhere else. So `write_profile()`:
 
 1. Validates the requested name against `PROFILES` first (invalid name raises
    `ProfileError`, nothing touches the filesystem).
@@ -179,6 +216,13 @@ future `dotfiles profile <name>` CLI (task 2d), which will call
 4. Only if the ancestry is clean does it `mkdir(parents=True, exist_ok=True)`
    the parent and write atomically (temp file in the same directory +
    `os.replace`), so a reader never sees a half-written value.
+
+The walk itself (`_first_symlinked_ancestor()`) lives here too and is the
+**one** implementation of it in this repo: `install.py`'s install-receipt
+write (`~/.local/state/dotfiles/install-root`, a second, unrelated
+state-marker file) imports and calls it rather than keeping its own copy, so
+there is exactly one issue-#29 ancestry walk for both call sites to drift
+out of sync with.
 
 The **readers** (`resolve_profile`, `dotfiles_profile`) do not fail on a
 symlinked ancestor — a read cannot be turned into an arbitrary-file

@@ -1,14 +1,25 @@
 ---
 # Dispatch on OS family. Each branch reads the matching manifest from the repo
 # root; none of them re-list packages here.
+#
+# Tags (added for #40's `dotfiles profile <name>` CLI, which re-runs this
+# play scoped to `--tags ai_clis` after a profile switch): a switch between
+# bare/inline/agentic only ever changes want_ai_clis, never the OS package
+# manifests, so re-running the whole apt/brew sweep on every profile switch
+# would be slow and need sudo for no reason. `ai_clis` isolates exactly the
+# task that IS profile-gated; `packages` tags the role's OS-package tasks for
+# symmetry / a normal full run. Role behaviour is otherwise unchanged --
+# these are additive tags, no `when:` conditions moved or altered.
 
 - name: Install apt packages (Debian / Ubuntu / WSL)
   ansible.builtin.import_tasks: apt.yml
   when: ansible_facts['os_family'] == 'Debian'
+  tags: [packages]
 
 - name: Install Homebrew packages (macOS)
   ansible.builtin.import_tasks: homebrew.yml
   when: ansible_facts['os_family'] == 'Darwin'
+  tags: [packages]
 
 # winget / Windows is Phase 3. packages/winget.txt is intentionally left
 # unconsumed here; see roles/packages/README.md.
@@ -16,3 +27,4 @@
 - name: Install profile-gated AI CLIs
   ansible.builtin.import_tasks: ai_clis.yml
   when: want_ai_clis | bool
+  tags: [packages, ai_clis]

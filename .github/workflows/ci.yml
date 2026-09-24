@@ -13,13 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Syntax gate for the shell scripts (bash -n, parse-only) plus two small,
-  # hermetic Python checks: py_compile for install.py and
-  # legacy/provision_legacy.py, and tests/test_install_ai_gate.py, which actually
-  # RUNS install.py (for real, against a throwaway scratch copy -- see that
-  # file's docstring) to regression-test the AI-profile gate's tri-state
-  # (invalid profile = leave-alone, not a silent unlink) fixed as part of
-  # PR #64's security review.
+  # Syntax gate for the shell scripts (bash -n, parse-only) plus several
+  # small, hermetic Python/shell checks: py_compile for install.py,
+  # legacy/provision_legacy.py, profile/profile.py and tools/dotfiles.py;
+  # profile/test_profile.py + profile/test_profile.sh (the profile-contract
+  # reader's own corpus, both implementations -- was never wired into CI
+  # before #40, a pre-existing gap closed here rather than left for later);
+  # tests/test_install_ai_gate.py, which actually RUNS install.py (for real,
+  # against a throwaway scratch copy -- see that file's docstring) to
+  # regression-test the AI-profile gate's tri-state (invalid profile =
+  # leave-alone, not a silent unlink) fixed as part of PR #64's security
+  # review; and tests/test_dotfiles_cli.py, which does the same for the
+  # `dotfiles profile` CLI added in #40 (tools/dotfiles.py) -- invalid-name
+  # rejection, the ancestor-symlink warn+skip, atomic write, --dry-run, and
+  # the Ansible hand-off, all against real subprocess runs in a sandbox
+  # $HOME, never mocked.
   shell-python-syntax:
     name: shell-python-syntax
     runs-on: ubuntu-latest
@@ -32,8 +40,23 @@ jobs:
       - name: python -m py_compile legacy/provision_legacy.py
         run: python3 -m py_compile legacy/provision_legacy.py
 
+      - name: python -m py_compile profile/profile.py
+        run: python3 -m py_compile profile/profile.py
+
+      - name: python -m py_compile tools/dotfiles.py
+        run: python3 -m py_compile tools/dotfiles.py
+
+      - name: python3 profile/test_profile.py (profile contract, Python reader)
+        run: python3 profile/test_profile.py -v
+
+      - name: bash profile/test_profile.sh (profile contract, shell reader)
+        run: bash profile/test_profile.sh
+
       - name: python3 tests/test_install_ai_gate.py (AI-gate tri-state regression)
         run: python3 tests/test_install_ai_gate.py -v
+
+      - name: python3 tests/test_dotfiles_cli.py (dotfiles profile CLI)
+        run: python3 tests/test_dotfiles_cli.py -v
 
       - name: bash -n on every tracked shell script
         run: |

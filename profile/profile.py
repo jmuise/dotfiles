@@ -37,6 +37,7 @@ __all__ = [
     "resolve_profile",
     "profile_at_least",
     "write_profile",
+    "_first_symlinked_ancestor",
 ]
 
 # Canonical, ordered from least to most capable. Index == rank.
@@ -90,10 +91,17 @@ def _ancestors_to_home(path: Path, home: Optional[Path] = None) -> Iterable[Path
         current = parent
 
 
-def _symlink_in_ancestry(path: Path, home: Optional[Path] = None) -> Optional[Path]:
+def _first_symlinked_ancestor(path: Path, home: Optional[Path] = None) -> Optional[Path]:
     """Return the first symlink at ``path`` or any ancestor up to ``$HOME``.
 
-    ``None`` if the ancestry is clean.
+    ``None`` if the ancestry is clean. This is issue #29's ancestry-walk
+    check. It used to have a second, near-identical implementation in
+    ``install.py`` (guarding the install receipt); that copy has been
+    deleted and ``install.py`` now imports this one instead, so there is
+    exactly one implementation of the walk for the whole repo. ``install.py``
+    calls this the same way it always called its own copy --
+    positionally, with the *parent* of the state-marker file being written
+    as ``path`` and ``$HOME`` as ``home`` -- so behaviour there is unchanged.
     """
     for component in _ancestors_to_home(path, home=home):
         try:
@@ -139,7 +147,7 @@ def resolve_profile(
     if not is_symlink and not p.exists():
         return DEFAULT_PROFILE
 
-    offender = _symlink_in_ancestry(p, home=home_p)
+    offender = _first_symlinked_ancestor(p, home=home_p)
     if offender is not None:
         _warn(f"{offender} is a symlink; reading the profile through it anyway")
 
@@ -214,7 +222,7 @@ def write_profile(
     p = Path(path) if path is not None else profile_path(config_home)
     home_p = Path(home) if home is not None else None
 
-    offender = _symlink_in_ancestry(p, home=home_p)
+    offender = _first_symlinked_ancestor(p, home=home_p)
     if offender is not None:
         _warn(
             f"{offender} is a symlink -- refusing to write the profile through it; "
