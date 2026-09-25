@@ -12,7 +12,7 @@ no-op (one `set_fact`, one `debug`, nothing else).
 | WSL-specific apt packages | `tasks/apt.yml` | n/a (new; empty by default) | yes — no-op on `--check --diff` (empty list) |
 | gitconfig `[credential]` migration | `tasks/gitconfig_credential_migration.yml` | `wsl/migrate-gitconfig-credential.sh` | yes — WSL, real host |
 | Windows Credential Manager bridge | `tasks/gcm_bridge.yml` | `wsl/bridge-gcm.sh` | yes — WSL, real host |
-| `/etc/wsl.conf` (systemd) | `tasks/distro.yml` | n/a (new; no legacy equivalent) | yes — `--check --diff` only (root op; see "Verifying on a real WSL host") |
+| `/etc/wsl.conf` (systemd) | `tasks/distro.yml` | n/a (new; no legacy equivalent); opt-in, `null` by default | yes — `--check --diff` only (root op; see "Verifying on a real WSL host") |
 
 `wsl/install-apt-packages.sh`, `wsl/bootstrap.ps1`, `wsl/detect-state.ps1`,
 `wsl/.wslconfig.template` and `wsl/.wslconfig.local.example` are **not**
@@ -86,6 +86,26 @@ wins:
 Both are read-only discovery (a `command -v` PATH probe and a controller-side
 `fileglob` lookup); neither writes anything or requires `become`.
 
+**Trust assumption on `wsl_windows_gcm_path`'s auto-discovery.** The
+`command -v git.exe` probe searches the *WSL* PATH as this role's process
+sees it -- which lists ordinary Linux directories first and the
+interop-appended Windows `PATH` entries last (WSL's default
+`appendWindowsPath` behaviour). `command -v` returns the first match, so
+anything earlier in PATH named `git.exe` -- for instance an executable
+planted in `~/.local/bin` or any other Linux-side directory that sorts
+before the Windows entries -- would be resolved instead of the real Windows
+Git, and its derived path gets written straight into
+`credential.helper` (`gcm_bridge.yml`). This is safe only because PATH
+itself is assumed not to be attacker-influenced (the same assumption every
+other PATH-based lookup in this codebase makes); it is not re-validated
+here. If PATH cannot be trusted on a given host, set `wsl_windows_gcm_path`
+explicitly (see the table above) to skip the PATH probe entirely --
+discovery is only attempted when it is unset, and an explicit value always
+wins over it (`gcm_bridge.yml`'s "Resolve the GCM path (explicit override
+wins over discovery)" task overwrites whatever discovery produced). Setting
+it explicitly is the recommended configuration for any host where PATH
+integrity isn't already guaranteed.
+
 ## Key variables (`defaults/main.yml`)
 
 | Variable | Default | Purpose |
@@ -99,7 +119,33 @@ Both are read-only discovery (a `command -v` PATH probe and a controller-side
 | `wsl_gcm_wrapper_name` | `dotfiles-gcm-bridge` | wrapper script filename |
 | `wsl_manage_etc_wsl_conf` | `true` | master switch for `tasks/distro.yml` |
 | `wsl_etc_wsl_conf_become` | `true` | set `false` to dry-run `/etc/wsl.conf` without root |
-| `wsl_systemd_enabled` | `true` | desired value of `/etc/wsl.conf`'s `[boot] systemd` |
+| `wsl_systemd_enabled` | `null` | desired value of `/etc/wsl.conf`'s `[boot] systemd`; `null` leaves it untouched (see below), `true`/`false` manage it |
+
+### `/etc/wsl.conf` (systemd)
+
+`wsl_systemd_enabled` defaults to `null`, meaning "leave `[boot] systemd`
+alone" -- `tasks/distro.yml`'s `ini_file` task is skipped entirely (`when:
+wsl_systemd_enabled is not none`), so a default run makes zero changes to
+`/etc/wsl.conf`, matching legacy behaviour (no script in `wsl/` has ever
+touched this file). This is a deliberate change from an earlier version of
+this role that defaulted to `true`: on a real systemd-enabled WSL host, the
+`WSLInterop` binfmt_misc registration (`/proc/sys/fs/binfmt_misc/WSLInterop`)
+was found to be absent, which makes any Windows-binary exec fail with "Exec
+format error" -- including this same role's own GCM bridge wrapper
+(`gcm_bridge.yml`, which execs `git-credential-manager.exe`). Defaulting to
+managing this file would have silently broken the bridge starting from the
+next WSL session (`wsl --shutdown` / a fresh session) for anyone who hadn't
+opted in.
+
+Set `wsl_systemd_enabled: true` (or `false`) explicitly to opt into managing
+it. When set to `true`, `tasks/distro.yml` emits a warning (via
+`ansible.builtin.debug`) if `WSLInterop` is already absent on this host, or
+if the GCM bridge is already configured (`wsl_gcm_bridge_configured`, set in
+`gcm_bridge.yml`) -- either signal means there is something for a future
+interop loss to break. The warning can't detect the regression itself
+(enabling systemd only takes effect after the next WSL session, not this
+run), so treat it as: if credentials or other Windows-binary exec stop
+working after a `wsl --shutdown`, check `[boot] systemd` first.
 
 ## Verifying on a real WSL host
 

@@ -65,4 +65,18 @@ wsl_gcm_wrapper_name: "dotfiles-gcm-bridge"
 # a real WSL host") needs a knob to skip privilege escalation.
 wsl_manage_etc_wsl_conf: true
 wsl_etc_wsl_conf_become: true
-wsl_systemd_enabled: true
+
+# Left null (not a bool) by default -- null means "do not touch [boot]
+# systemd in /etc/wsl.conf at all", matching legacy behaviour exactly (no
+# script in wsl/ has ever written this file). true/false opt IN to managing
+# it. This used to default to true, which on a real host with no [boot]
+# systemd entry yet would silently enable systemd on the *next* WSL session
+# -- and on at least one systemd-enabled reference host, the WSLInterop
+# binfmt_misc registration was simply absent, which breaks any Windows-binary
+# exec (including the GCM bridge wrapper this same role installs) with "Exec
+# format error". That is a real, observed regression for a change nothing
+# forced the user to opt into, so the safe default is "leave it alone" -- see
+# tasks/distro.yml (gates the whole task on this being non-null) and the
+# README's "`/etc/wsl.conf` (systemd)" section for the warning emitted when a
+# user does opt in.
+wsl_systemd_enabled: null

@@ -145,3 +145,25 @@
                 path: "{{ wsl_gitconfig_local_path }}"
                 mode: "0600"
               when: _wsl_gcm_local_stat_post.stat.exists or not ansible_check_mode
+
+- name: Record whether the GCM bridge is configured (this run or a previous one)
+  # Consumed by tasks/distro.yml's systemd warning: enabling [boot] systemd
+  # can unregister WSL interop, which would break this bridge's exec of a
+  # Windows binary. "Configured" covers both a previous run (a bare
+  # [credential] block already present in ~/.gitconfig.local, pointing at
+  # this role's own wrapper script -- wsl_gcm_local_has_credential is true
+  # for ANY bare [credential] block, including one from
+  # gitconfig_credential_migration.yml, hence the extra check that the
+  # value actually names the wrapper) and this run (a real
+  # git-credential-manager.exe was found and stat'd above). Runs
+  # unconditionally (outside every when-gated block above) so it always
+  # resolves to a real true/false rather than leaving the fact undefined
+  # when a branch was skipped.
+  ansible.builtin.set_fact:
+    wsl_gcm_bridge_configured: >-
+      {{
+        (wsl_gcm_local_has_credential
+         and ((_wsl_gcm_local_info.config_values['credential.helper'] | default([]) | join(' '))
+              is search(wsl_gcm_wrapper_name)))
+        or ((_wsl_gcm_exe_stat is defined) and (_wsl_gcm_exe_stat.stat.exists | default(false)))
+      }}
