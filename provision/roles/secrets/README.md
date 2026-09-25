@@ -126,6 +126,41 @@ listing, and `no_log: true` keeps them out of `-v`/`--diff` output too.
 | `secrets_openrouter_api_key` | `$OPENROUTER_API_KEY` | value to seed; empty skips the task |
 | `secrets_gh_token_override` | `$GH_TOKEN` | escape hatch when `gh auth token` can't derive one locally |
 | `secrets_seed_identity` / `secrets_seed_gh_token` / `secrets_seed_claude_token` / `secrets_seed_openrouter_key` | `true` | per-secret on/off switch |
+| `secrets_force_seed_in_devcontainer` | `false` | **test/CI only, never on a real devcontainer.** Forces the git-identity/`GH_TOKEN` devcontainer skip-gate open anyway (with a loud warning) -- see "Devcontainer / Windows detection" below |
+
+## Devcontainer / Windows detection is not overridable via `-e`
+
+`tasks/git_identity.yml` and `tasks/gh_token.yml` skip seeding the
+credential store when running inside a devcontainer (nothing to seed *from*
+there -- see `legacy/provision_legacy.py`'s `is_devcontainer()`) or on
+Windows. That detection is computed once in `tasks/main.yml` into internal,
+underscore-prefixed facts (`_secrets_detected_devcontainer`,
+`_secrets_detected_windows`) that the two gates read directly -- there is no
+public `secrets_is_devcontainer`/`secrets_is_windows` variable. This is
+deliberate: Ansible extra-vars (`-e`) take precedence over any `set_fact`
+result regardless of name, so a documented-sounding public variable there
+would let `-e secrets_is_devcontainer=false` silently defeat the gate and
+persist a forwarded `GH_TOKEN` and/or the git identity into a devcontainer's
+own on-disk credential store.
+
+The only supported way to force the devcontainer half of the gate open is
+`secrets_force_seed_in_devcontainer: true` (**test/CI only, never on a real
+devcontainer**) -- it exists purely so this role's own test/CI harness can
+exercise the non-devcontainer code path from inside a container, where
+`/.dockerenv` is always present. Setting it prints a loud warning whenever a
+devcontainer was actually detected and the gate is being forced open. There
+is no equivalent force flag for the Windows half of the gate.
+
+## Security notes
+
+- **No fact caching, no debug dump of facts, for this play.** The env-sourced
+  secret values this role reads (`CLAUDE_CODE_OAUTH_TOKEN`,
+  `OPENROUTER_API_KEY`, `GH_TOKEN`) are present in `ansible_facts.env` for
+  the duration of the run (Ansible gathers the process environment as a
+  fact). Never enable fact caching or add a `debug: var=ansible_facts`-style
+  dump to this play -- doing so would persist or print those values outside
+  the `no_log: true`-protected task results this role otherwise confines
+  them to.
 
 ## Running it
 
