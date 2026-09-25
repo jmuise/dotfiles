@@ -60,11 +60,42 @@ scheduled_ansible_pull_ref: "main"
 scheduled_ansible_pull_playbook: "provision/site.yml"
 scheduled_ansible_pull_dest: "{{ ansible_facts['env']['HOME'] }}/.local/state/dotfiles/ansible-pull"
 scheduled_ansible_pull_log: "{{ ansible_facts['env']['HOME'] }}/.local/state/dotfiles/ansible-pull.log"
-# Extra ansible-playbook-style args appended verbatim to the ansible-pull
-# invocation, e.g. "-e profile=bare" or "--tags packages". Empty by default,
-# so a pull re-provisions the whole machine, same as running
-# `ansible-playbook site.yml` by hand would.
-scheduled_ansible_pull_extra_args: ""
+# Extra ansible-playbook-style args appended to the ansible-pull invocation,
+# e.g. ["-e", "profile=bare"] or ["--tags", "packages"]. A LIST, not a single
+# string: each element becomes one shell-quoted argv entry (see
+# tasks/ansible_pull.yml's "Build the ansible-pull command line" for why a
+# flag and its value must stay two separate, independently-quoted tokens
+# rather than one pre-joined string). Empty by default, so a pull
+# re-provisions the whole machine, same as running `ansible-playbook
+# site.yml` by hand would.
+scheduled_ansible_pull_extra_args: []
+
+# Opt-in: pass `--verify-commit` to ansible-pull, which asks git to verify
+# the GPG signature of the commit being checked out before anything from it
+# runs. OFF by default because it has two hard prerequisites this role does
+# not (and cannot) set up on its own:
+#   1. Every commit on `scheduled_ansible_pull_ref` that this timer might
+#      pull must actually be signed -- an unsigned commit makes `git
+#      verify-commit` fail, which fails the whole ansible-pull run.
+#   2. The signer's public key must already be in this machine's OWN trusted
+#      GPG keyring (git's ordinary commit-signature trust model -- this role
+#      does not distribute, pin, or manage keys). Without a trusted key
+#      present, verification fails exactly the same way as for an unsigned
+#      commit.
+# Turning this on without both in place turns every tick into a permanent
+# failure, not a security improvement -- only enable it once commit signing
+# and a trusted keyring are actually set up.
+scheduled_ansible_pull_verify_commit: false
+
+# Tags to pass to ansible-pull's `--skip-tags`, e.g. ["packages"] to skip the
+# apt-install task that requires `become: true` (see README.md's "Security /
+# trust model" section for why an unattended `become` task needs passwordless
+# sudo configured separately, and why that's a decision this role does not
+# make for you). A LIST, quoted and comma-joined into a single --skip-tags
+# argument. Empty by default, so a pull re-provisions the whole machine
+# untouched, matching the historical behaviour of this role and of running
+# `ansible-playbook site.yml` by hand.
+scheduled_ansible_pull_skip_tags: []
 
 # systemd.time(7) OnCalendar= syntax; used for the systemd-user-timer branch.
 scheduled_ansible_pull_oncalendar: "Mon *-*-* 09:00:00"

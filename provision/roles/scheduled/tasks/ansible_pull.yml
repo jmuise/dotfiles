@@ -74,15 +74,40 @@
   # for a per-user Ansible install, but pinning the resolved absolute path
   # at deploy time at least removes the repeated PATH-lookup itself as an
   # attack surface on every tick.
+  #
+  # Quoting (relates to #45's security review): this exact string is used two
+  # different ways -- as the cron `job:` field, executed via `/bin/sh -c`,
+  # and verbatim as a systemd unit's `ExecStart=`, which is NOT run through a
+  # shell but does its own shell-like tokenising (systemd.syntax(7)): it
+  # splits on whitespace and honours single-quoted sections as one word,
+  # same as /bin/sh does for the plain (no embedded-quote) values this role
+  # ever produces (a clone URL, a ref name, an absolute path). Every variable
+  # component below -- including the resolved ansible-pull path itself, in
+  # case a per-user install location ever contains a space -- is passed
+  # through the `quote` filter (shlex-style single-quoting) so both
+  # interpreters parse it identically, including when a value contains a
+  # space. Verified against both interpretations: see README.md's
+  # verification notes.
+  #
+  # `scheduled_ansible_pull_extra_args` is a LIST rather than a single
+  # pre-joined string for the same reason: a flag and its value (e.g. "-e",
+  # "profile=bare") are two separate command-line arguments. Quoting the
+  # whole pre-joined string as one token would collapse them into a single
+  # argument and break `-e`'s own parsing; quoting each list element
+  # independently (via `map('quote')`) and then space-joining the results
+  # keeps them as separate, correctly-quoted argv entries -- including when
+  # an individual element itself contains a space (e.g. "profile=my profile").
   ansible.builtin.set_fact:
     _scheduled_pull_command: >-
-      {{ _scheduled_pull_which.stdout | trim }}
-      -U {{ scheduled_ansible_pull_repo }}
-      -C {{ scheduled_ansible_pull_ref }}
-      -d {{ scheduled_ansible_pull_dest }}
+      {{ _scheduled_pull_which.stdout | trim | quote }}
+      -U {{ scheduled_ansible_pull_repo | quote }}
+      -C {{ scheduled_ansible_pull_ref | quote }}
+      -d {{ scheduled_ansible_pull_dest | quote }}
       -o
-      {{ scheduled_ansible_pull_extra_args }}
-      {{ scheduled_ansible_pull_playbook }}
+      {{ '--verify-commit' if scheduled_ansible_pull_verify_commit | bool else '' }}
+      {{ ('--skip-tags ' ~ (scheduled_ansible_pull_skip_tags | join(',') | quote)) if (scheduled_ansible_pull_skip_tags | length > 0) else '' }}
+      {{ scheduled_ansible_pull_extra_args | map('quote') | join(' ') }}
+      {{ scheduled_ansible_pull_playbook | quote }}
   when: scheduled_ansible_pull_enabled | bool
 
 - name: Determine the systemd user-unit paths

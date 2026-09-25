@@ -95,16 +95,47 @@ OFF by default (`scheduled_ansible_pull_enabled: false`). When enabled:
 4. Disabling the flag (`scheduled_ansible_pull_enabled: false`, the default)
    tears down **both** mechanisms unconditionally, whichever was present.
 
-The pull itself: `ansible-pull -U <repo> -C <ref> -d <dest> -o <playbook>`.
-`-o` (`--only-if-changed`) makes most ticks a no-op — the playbook only
-re-runs when `<ref>` has actually moved. No `-i`/inventory flag: `ansible-pull`
-defaults to a local connection against the host it runs on, matching
-`provision/inventory/hosts.yml`'s own `connection=local` single-host model.
-Because the pulled command is exactly `ansible-playbook provision/site.yml`
-(no `-e profile=` override), profile resolution happens exactly as
-documented in `profile/README.md` — via the shared reader
-(`profile/profile.py`), reading `${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/profile`
-on the real machine, independent of which checkout is doing the pulling.
+The pull itself: `ansible-pull -U <repo> -C <ref> -d <dest> -o <playbook>`,
+plus `--verify-commit` and/or `--skip-tags <list>` when the matching
+variables below are set. `-o` (`--only-if-changed`) makes most ticks a
+no-op — the playbook only re-runs when `<ref>` has actually moved. No
+`-i`/inventory flag: `ansible-pull` defaults to a local connection against
+the host it runs on, matching `provision/inventory/hosts.yml`'s own
+`connection=local` single-host model. Because the pulled command is exactly
+`ansible-playbook provision/site.yml` (no `-e profile=` override), profile
+resolution happens exactly as documented in `profile/README.md` — via the
+shared reader (`profile/profile.py`), reading
+`${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/profile` on the real machine,
+independent of which checkout is doing the pulling.
+
+Every variable component of this command line (`scheduled_ansible_pull_repo`,
+`_ref`, `_dest`, `_extra_args`, `_skip_tags`, `_playbook`, and the
+resolved `ansible-pull` path itself) is shell-quoted (Ansible's `quote`
+filter) before being interpolated, because the same rendered string is used
+both as the cron `job:` field (run through `/bin/sh -c`) and, verbatim, as a
+systemd unit's `ExecStart=` (which does its own, different, shell-like
+tokenising — see `tasks/ansible_pull.yml`'s "Build the ansible-pull command
+line" for the full reasoning and why both interpreters agree on the
+quoted result). `scheduled_ansible_pull_extra_args` and
+`scheduled_ansible_pull_skip_tags` are lists, not single strings, so a flag
+and its value stay two independently-quoted argv entries rather than
+collapsing into one.
+
+Verified concretely (security-review follow-up, same `debian:trixie`
+systemd-as-PID-1 container approach as the rest of this README): with
+`scheduled_ansible_pull_ref` set to `"a ref with space"` and
+`scheduled_ansible_pull_dest` set to a path containing a space, both the
+rendered systemd `ExecStart=` and the rendered cron `job:` line pass the
+value through as a single argument (confirmed by pointing a throwaway
+`ExecStart=`/cron job at an argv-dumping script instead of `ansible-pull` and
+inspecting exactly what it received — `/bin/sh -c` and systemd's own
+tokenizer agreed byte-for-byte); `systemd-analyze --user verify` passes on
+the rendered unit; a rerun is idempotent (`changed=0`); and with
+`scheduled_ansible_pull_verify_commit: true` and
+`scheduled_ansible_pull_skip_tags: ["packages"]` set, both `--verify-commit`
+and `--skip-tags packages` appear correctly in the rendered command, on both
+the systemd and cron paths, and `systemd-analyze --user verify` still
+passes.
 
 Both units are **user** units (`~/.config/systemd/user`, `scope: user`
 throughout `tasks/ansible_pull.yml`) — nothing here installs a system unit
@@ -145,11 +176,34 @@ The mitigations built into this role:
   branch happens to be today" — precisely so that choice is visible to
   whoever reviews a change to it, and so it can be consciously overridden to
   a tag or commit SHA for a stronger guarantee (at the cost of needing a
-  manual bump to pick up new commits).
+  manual bump to pick up new commits). **Anyone who actually enables this
+  timer should override `scheduled_ansible_pull_ref` away from `main` to a
+  tag or a commit SHA.** `main` is a moving target by definition — every
+  push to it is a new thing the timer will auto-execute on its next tick,
+  with no per-commit human sign-off. A tag or SHA turns "auto-execute
+  whatever `main` becomes" into "auto-execute the one specific tree I
+  already reviewed and pinned," and makes each future update an explicit,
+  reviewable bump instead of an implicit one.
 - **No credential, ever.** `scheduled_ansible_pull_repo` is asserted to a
   plain HTTPS clone URL; nothing here supports embedding a token or an SSH
   deploy key. If this ever needs a private repo, that is a new decision
   requiring its own security review, not an assumed extension of this one.
+- **Optional commit-signature verification.** `scheduled_ansible_pull_verify_commit`
+  (default `false`) passes `--verify-commit` to `ansible-pull`, which asks
+  git to verify the pulled commit's GPG signature before anything from it
+  runs. This is opt-in, not on by default, because it has real prerequisites
+  this role cannot set up for you: every commit the timer might pull must
+  actually be signed, and the signer's public key must already be present in
+  this machine's own trusted GPG keyring. Enabling it without both in place
+  does not make the timer safer — it makes every tick fail outright, since
+  `git verify-commit` (and therefore the whole `ansible-pull` invocation)
+  errors on an unsigned commit or an untrusted signer exactly the same way.
+- **Optional tag restriction.** `scheduled_ansible_pull_skip_tags` (default
+  `[]`, i.e. unrestricted — the whole playbook runs, matching the historical
+  behaviour of this role) passes `--skip-tags` to `ansible-pull`. Set it to
+  `["packages"]` to skip the apt-install task and avoid the `become`
+  requirement described below entirely, if this timer should only handle,
+  e.g., the dotfiles-linking layer unattended.
 - This is still, ultimately, **"trust your own repo's main branch to
   auto-execute on your own machine."** For a single-maintainer personal
   dotfiles repo that may be an acceptable baseline risk posture (it is
@@ -161,6 +215,36 @@ The mitigations built into this role:
   that trade-off as a deliberate decision, not a default to accept
   silently.
 
+### `become` and passwordless sudo
+
+The pulled `provision/site.yml` includes the `packages` role, whose apt-install
+task escalates via `become: "{{ packages_apt_become | bool }}"` (see
+`provision/roles/packages/tasks/apt.yml`) to run `apt-get install` as root.
+`sudo` normally prompts for a password interactively — there is no terminal
+attached to a timer-triggered `ansible-pull` run (neither the systemd
+service nor the cron job has one), so an interactive prompt cannot be
+answered and the `become` task simply fails, and the whole pulled playbook
+run fails with it.
+
+**Making this timer succeed unattended therefore requires passwordless
+(`NOPASSWD`) sudo configured for the user this timer runs as, for whatever
+commands the pulled playbook's `become` tasks need.** This role does **not**
+configure `NOPASSWD` sudo itself, and does not treat needing it as
+self-evident: granting `NOPASSWD` sudo is its own, separate, explicit
+security decision — it means any process able to act as this user (not just
+this timer) can run those commands as root without a password prompt — and
+must be made deliberately, outside of this role, by whoever operates the
+machine. Without it, the become tasks fail on every unattended tick, exactly
+as designed: this role does not silently downgrade `become` or swallow the
+failure, so an unattended run that hits an apt task without `NOPASSWD` sudo
+configured reports the failure loudly rather than pretending to have
+succeeded.
+
+If unattended `become` is not something you want to grant, set
+`scheduled_ansible_pull_skip_tags: ["packages"]` (above) to skip the
+apt-install task entirely and let the timer handle only the tag-scoped
+subset of the playbook that does not need root.
+
 ## Key variables (`defaults/main.yml`)
 
 | Variable                              | Default                                   | Purpose                                                    |
@@ -168,8 +252,11 @@ The mitigations built into this role:
 | `scheduled_windows_dotfiles_dir`       | `""`                                       | Repo root as seen from the Windows host; empty skips every Windows task |
 | `scheduled_ansible_pull_enabled`       | `false`                                    | Master on/off switch for the WSL/Linux timer                |
 | `scheduled_ansible_pull_repo`          | this repo's HTTPS URL                      | Cloned by `ansible-pull`; must stay a plain HTTPS URL, no credential |
-| `scheduled_ansible_pull_ref`           | `main`                                     | Pinned ref — override to a tag/SHA for a stronger guarantee  |
+| `scheduled_ansible_pull_ref`           | `main`                                     | Pinned ref — **override to a tag/SHA if you enable the timer**, not left at `main` |
 | `scheduled_ansible_pull_playbook`      | `provision/site.yml`                       | What `ansible-pull` runs after cloning                       |
+| `scheduled_ansible_pull_extra_args`    | `[]`                                       | Extra ansible-playbook-style argv entries, e.g. `["-e", "profile=bare"]` |
+| `scheduled_ansible_pull_skip_tags`     | `[]`                                       | Tags to pass via `--skip-tags`, e.g. `["packages"]` to avoid the `become`-requiring apt task |
+| `scheduled_ansible_pull_verify_commit` | `false`                                    | Passes `--verify-commit`; requires signed commits + a trusted local GPG keyring |
 | `scheduled_ansible_pull_oncalendar`    | `Mon *-*-* 09:00:00`                       | systemd `OnCalendar=` schedule                               |
 | `scheduled_ansible_pull_cron_*`        | same cadence, cron fields                  | Used only on the cron-fallback path                          |
 
