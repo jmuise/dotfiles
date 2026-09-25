@@ -115,3 +115,5 @@
   roles:
     - role: packages
       tags: [packages]
+    - role: wsl
+      tags: [wsl]

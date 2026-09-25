@@ -1,0 +1,15 @@
+---
+# WSL-specific apt packages ONLY -- packages/apt.txt (provision/roles/packages)
+# stays the single source of truth for ordinary Debian/Ubuntu packages, WSL
+# included. This file exists so a genuinely WSL-only package (e.g. `wslu`,
+# if a future task ever needs wslview/wslsys) has somewhere to go without
+# duplicating apt.txt or teaching that role about WSL. wsl_extra_apt_packages
+# is empty by default (see defaults/main.yml) -- imported only when non-empty
+# (tasks/main.yml), so this is a documented no-op today, not dead code.
+
+- name: Ensure WSL-specific apt packages are present
+  become: "{{ wsl_apt_become | bool }}"
+  ansible.builtin.apt:
+    name: "{{ wsl_extra_apt_packages }}"
+    state: present
+    update_cache: "{{ wsl_apt_update_cache | bool }}"

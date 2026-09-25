@@ -1,0 +1,60 @@
+---
+# Distro setup: /etc/wsl.conf.
+#
+# NOT a port of anything in wsl/ -- no legacy script manages this file today
+# (wsl/bootstrap.ps1 gets as far as `wsl --install -d Debian` and then the
+# username/password first-run wizard; nothing on the Linux side has ever
+# touched /etc/wsl.conf). This is new, narrowly-scoped, additive behaviour:
+# optionally manage [boot] systemd declaratively, the same way the rest of
+# this role manages state, instead of leaving "first thing you do on a fresh
+# Debian WSL distro is hand-edit /etc/wsl.conf" as tribal knowledge. See
+# defaults/main.yml for the wsl_manage_etc_wsl_conf off-switch and
+# wsl_etc_wsl_conf_become's become-disabled dry-run knob (mirrors
+# provision/roles/packages's packages_apt_become).
+#
+# wsl_systemd_enabled defaults to null (leave [boot] systemd alone entirely
+# -- see defaults/main.yml for why). Only true/false below actually manage
+# the setting; this task is skipped outright otherwise, so a default run
+# makes zero changes to /etc/wsl.conf, matching legacy behaviour exactly.
+#
+# community.general.ini_file rather than lineinfile: /etc/wsl.conf is INI,
+# not an arbitrary line-oriented file, and ini_file has full check_mode +
+# diff support and adds the [boot] section itself if it's missing.
+
+- name: Warn that enabling systemd can break WSL interop (and this role's own GCM bridge)
+  # Observed live on a systemd-enabled reference host: the WSLInterop
+  # binfmt_misc registration was simply absent, which makes any Windows
+  # binary exec fail with "Exec format error" -- including the GCM bridge
+  # wrapper gcm_bridge.yml installs (a shell script that execs
+  # git-credential-manager.exe). This can't be a hard failure: it's a
+  # forward-looking warning about the *next* WSL session (systemd=true only
+  # takes effect after `wsl --shutdown` / a fresh session), not something
+  # this run can detect changing retroactively. Fires when interop is
+  # already missing (so enabling systemd cements an existing problem) or
+  # when the GCM bridge is actually configured (so there is something for a
+  # future interop loss to break).
+  ansible.builtin.debug:
+    msg: >-
+      wsl_systemd_enabled is true, but on some WSL builds enabling systemd
+      unregisters the WSLInterop binfmt_misc entry (Windows binaries then
+      fail with "Exec format error") starting from the next WSL session --
+      and this role's own GCM bridge wrapper execs a Windows binary
+      (git-credential-manager.exe). {{
+        'WSLInterop is already absent on this host.'
+        if not wsl_interop_available
+        else 'The GCM bridge is configured on this host.'
+      }} If credentials or other Windows-binary exec stop working after a
+      `wsl --shutdown`, this is the first thing to check.
+  when:
+    - (wsl_systemd_enabled | default(false)) | bool
+    - (not wsl_interop_available) or (wsl_gcm_bridge_configured | default(false))
+
+- name: Ensure /etc/wsl.conf's [boot] systemd matches wsl_systemd_enabled
+  become: "{{ wsl_etc_wsl_conf_become | bool }}"
+  community.general.ini_file:
+    path: /etc/wsl.conf
+    section: boot
+    option: systemd
+    value: "{{ wsl_systemd_enabled | bool | lower }}"
+    mode: "0644"
+  when: wsl_systemd_enabled is not none
