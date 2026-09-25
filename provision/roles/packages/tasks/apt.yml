@@ -45,10 +45,79 @@
   ansible.builtin.debug:
     var: packages_apt_wanted
 
+# ── #67: not every apt.txt entry exists on every Debian release ─────────────
+# git-delta is the package #67 reported (trixie/sid only, absent on
+# bookworm). Verifying this role with a real run against a fresh
+# debian:bookworm container (not just --check --diff, which installs
+# nothing and so never exercises this) surfaced a second, previously
+# unnoticed instance of the exact same problem: docker-buildx is *also*
+# trixie/sid-only and absent on bookworm. A single hardcoded git-delta
+# special case does not generalize -- the next manifest entry with the same
+# gap would reproduce #67 verbatim. So the probe below covers every entry in
+# packages_apt_wanted, not just git-delta.
+#
+# apt-cache policy needs a populated cache to answer honestly, so the cache
+# refresh is split out of the install task below (which used to do both in
+# one step) and run first. Probing before the aggregate install means an
+# absent package on this release fails its own *probe*, not the whole
+# multi-package ansible.builtin.apt call -- which is exactly the bug #67
+# reported (one absent manifest entry aborting every other package too).
+- name: Refresh the apt cache before probing package availability (#67)
+  become: "{{ packages_apt_become | bool }}"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ packages_apt_cache_valid_time | int }}"
+  when: packages_apt_update_cache | bool
+
+- name: Probe apt-cache for the availability of every wanted package (#67)
+  ansible.builtin.command: apt-cache policy {{ item }}
+  register: _packages_apt_policy
+  loop: "{{ packages_apt_wanted }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Determine which wanted packages apt can actually supply on this release (#67)
+  ansible.builtin.set_fact:
+    _packages_apt_available: >-
+      {{
+        _packages_apt_policy.results
+        | selectattr('stdout', 'search', 'Candidate: (?!\(none\))')
+        | map(attribute='item')
+        | list
+      }}
+
+- name: Record which wanted packages apt cannot supply on this release (#67)
+  ansible.builtin.set_fact:
+    packages_apt_unavailable: "{{ packages_apt_wanted | reject('in', _packages_apt_available) | list }}"
+
+# Consumed by tasks/delta.yml, imported right after this file, to decide
+# whether to fall back to the pinned-release binary install.
+- name: Record whether apt can supply git-delta on this release (delta.yml's fallback gate)
+  ansible.builtin.set_fact:
+    packages_delta_apt_available: "{{ 'git-delta' not in packages_apt_unavailable }}"
+
+- name: Warn about apt.txt entries this release's apt cannot supply (#67)
+  ansible.builtin.debug:
+    msg: >-
+      apt.txt entries not installable via apt on
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_release'] }}
+      -- skipping rather than aborting the whole install (see role
+      README.md's "#67 -- git-delta on bookworm" section):
+      {{ packages_apt_unavailable | join(', ') }}
+  when: packages_apt_unavailable | length > 0
+
+- name: Drop apt-unavailable entries from the install list (#67)
+  ansible.builtin.set_fact:
+    packages_apt_wanted: "{{ _packages_apt_available }}"
+  when: packages_apt_unavailable | length > 0
+
 - name: Ensure apt packages from packages/apt.txt are present
   become: "{{ packages_apt_become | bool }}"
   ansible.builtin.apt:
     name: "{{ packages_apt_wanted }}"
     state: present
-    update_cache: "{{ packages_apt_update_cache | bool }}"
+    update_cache: false
     cache_valid_time: "{{ packages_apt_cache_valid_time | int }}"

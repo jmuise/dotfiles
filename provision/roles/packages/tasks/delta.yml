@@ -1,0 +1,105 @@
+---
+# Fixes #67: git-delta is not apt-installable on Debian 12 (bookworm) -- the
+# package exists in trixie/sid only. packages_delta_apt_available is set by
+# tasks/apt.yml's probe (this file is only ever imported for the Debian
+# family, right after apt.yml -- see tasks/main.yml).
+#
+# This also folds in the #41-tagged portion of legacy/provision_legacy.py's
+# "devcontainer extras" block that shelled out to git/ensure-delta.sh: that
+# script's whole reason to exist was "apt-get install git-delta is not
+# reliable in devcontainers" -- the same apt-availability probe and fallback
+# below covers that case too (a devcontainer base image with the same gap
+# gets the same fallback), so no separate is_devcontainer branch is needed
+# here.
+#
+# Pinned version/checksums are lifted verbatim from git/ensure-delta.sh (see
+# defaults/main.yml) -- this task file is now the canonical place to bump
+# them; mirror any bump into git/ensure-delta.sh until that script retires
+# alongside it.
+
+- name: Check whether delta is already on PATH
+  ansible.builtin.command: sh -c 'command -v delta'
+  environment:
+    PATH: "{{ packages_search_path }}"
+  register: _packages_delta_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not packages_delta_apt_available
+
+# Skipped outright under --check: ansible.builtin.tempfile and
+# ansible.builtin.unarchive both only partially support check mode (see
+# neovim.yml's comment on the same pattern), so the whole fallback install is
+# gated on `not ansible_check_mode` and previewed with an explicit debug task
+# instead.
+- name: Preview the delta fallback install (check mode)
+  ansible.builtin.debug:
+    msg: "would install delta {{ packages_delta_version }} to ~/.local/share/dotfiles/delta (apt cannot supply git-delta on this release)"
+  when:
+    - not packages_delta_apt_available
+    - _packages_delta_present.rc != 0
+    - ansible_check_mode
+
+- name: Fall back to the pinned delta release when apt cannot supply git-delta
+  when:
+    - not packages_delta_apt_available
+    - _packages_delta_present.rc != 0
+    - not ansible_check_mode
+  block:
+    - name: Map machine architecture to delta's release naming scheme
+      ansible.builtin.set_fact:
+        _packages_delta_arch: >-
+          {{ 'x86_64-unknown-linux-gnu' if ansible_facts['architecture'] == 'x86_64'
+             else 'aarch64-unknown-linux-gnu' }}
+        _packages_delta_sha256: >-
+          {{ packages_delta_sha256_x86_64 if ansible_facts['architecture'] == 'x86_64'
+             else packages_delta_sha256_arm64 }}
+
+    - name: Create a temp directory for the delta download
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: packages-delta
+      register: _packages_delta_tmp
+
+    - name: Download and checksum-verify the pinned delta release
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/dandavison/delta/releases/download/{{ packages_delta_version }}/delta-{{
+          packages_delta_version }}-{{ _packages_delta_arch }}.tar.gz
+        dest: "{{ _packages_delta_tmp.path }}/delta.tar.gz"
+        checksum: "sha256:{{ _packages_delta_sha256 }}"
+        mode: "0644"
+
+    - name: Extract the delta tarball
+      ansible.builtin.unarchive:
+        src: "{{ _packages_delta_tmp.path }}/delta.tar.gz"
+        dest: "{{ _packages_delta_tmp.path }}"
+        remote_src: true
+
+    - name: Ensure ~/.local/share/dotfiles/delta and ~/.local/bin exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ ansible_env.HOME }}/.local/share/dotfiles/delta"
+        - "{{ ansible_env.HOME }}/.local/bin"
+
+    - name: Install the delta binary (mirrors git/ensure-delta.sh's layout)
+      ansible.builtin.copy:
+        src: "{{ _packages_delta_tmp.path }}/delta-{{ packages_delta_version }}-{{ _packages_delta_arch }}/delta"
+        dest: "{{ ansible_env.HOME }}/.local/share/dotfiles/delta/delta"
+        mode: "0755"
+        remote_src: true
+
+    - name: Symlink delta into ~/.local/bin
+      ansible.builtin.file:
+        src: "{{ ansible_env.HOME }}/.local/share/dotfiles/delta/delta"
+        dest: "{{ ansible_env.HOME }}/.local/bin/delta"
+        state: link
+        force: true
+
+    - name: Remove the temp download directory
+      ansible.builtin.file:
+        path: "{{ _packages_delta_tmp.path }}"
+        state: absent
