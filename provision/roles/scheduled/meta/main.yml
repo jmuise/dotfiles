@@ -1,0 +1,31 @@
+---
+galaxy_info:
+  role_name: scheduled
+  namespace: dotfiles
+  author: dotfiles maintainers
+  description: >-
+    Scheduled/periodic machine-state jobs: the Windows winget weekly-check
+    task plus an Ansible-driven winget lock/apply loop (Task Scheduler via
+    community.windows -- WRITTEN BUT UNVERIFIED, no Windows host reachable),
+    and an optional, off-by-default ansible-pull timer for WSL/Linux
+    (systemd user timer, falling back to cron).
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions: [all]
+    - name: Debian
+      versions: [all]
+    - name: Windows
+      versions: [all]
+
+# community.windows / ansible.windows provide win_scheduled_task / win_shell
+# for the (unverified) Windows branch. Both ship with the `ansible` package
+# (pipx install --include-deps ansible); listed here so `ansible-galaxy role
+# install` / lint knows about them, exactly as roles/packages/meta/main.yml
+# lists community.general for the same reason.
+collections:
+  - community.windows
+  - ansible.windows
+
+dependencies: []
