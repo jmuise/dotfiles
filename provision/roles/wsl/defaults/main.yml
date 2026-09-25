@@ -1,0 +1,68 @@
+---
+# ── WSL detection ────────────────────────────────────────────────────────────
+# Every task file this role imports is gated on wsl_is_wsl (see tasks/main.yml
+# for the detection logic and its justification). wsl_detect_override lets a
+# test harness force the gate either way without needing a real WSL kernel --
+# see roles/wsl/README.md "Testing off-WSL". Left null (not a bool) so the
+# detection logic in tasks/main.yml can tell "not set" apart from an explicit
+# false.
+wsl_detect_override: null
+
+# ── apt packages (WSL-specific only) ─────────────────────────────────────────
+# packages/apt.txt (provision/roles/packages) is the one source of truth for
+# ordinary Debian/Ubuntu packages, WSL included -- this role must not
+# duplicate it. This list is for packages that make sense ONLY under WSL and
+# would be actively wrong on bare Debian/Ubuntu.
+#
+# Empty by default: wslpath/wslinfo (used below for GCM discovery) are
+# provided directly by the WSL kernel/init, not by an apt package, and no
+# other WSL-only tool is in use yet. `wslu` (wslview/wslsys/...) is the
+# obvious future candidate if a task ever needs it -- add it here, not to
+# apt.txt, the day something actually depends on it.
+wsl_extra_apt_packages: []
+wsl_apt_become: true
+wsl_apt_update_cache: true
+
+# ── gitconfig credential migration + GCM bridge ──────────────────────────────
+# Both read Windows-side paths. Neither is guessable from inside WSL alone --
+# see roles/wsl/README.md "Windows-side path discovery" for exactly how each
+# default is derived and why an override always wins over discovery.
+
+# Path (as seen from WSL, e.g. under /mnt/c) to the Windows-side
+# ~/.gitconfig.local that wsl/bootstrap.ps1 used to pass to
+# migrate-gitconfig-credential.sh as $1, for a user.name/user.email fallback
+# when ~/.gitconfig.local doesn't exist yet on this side. Left empty by
+# default: discovered at run time (single unambiguous match under
+# /mnt/c/Users/*/.gitconfig.local) rather than guessed here, since the
+# Windows username is not knowable from a role default.
+wsl_windows_gitconfig_local: ""
+
+# Path (as seen from WSL) to the Windows-side git-credential-manager.exe that
+# wsl/bridge-gcm.sh used to bridge to. Left empty by default: discovered at
+# run time from `git.exe` on PATH (WSL interop), same derivation
+# wsl/bootstrap.ps1 used (two directories up from git.exe, then
+# mingw64/bin/git-credential-manager.exe).
+wsl_windows_gcm_path: ""
+
+wsl_gcm_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+wsl_gcm_wrapper_name: "dotfiles-gcm-bridge"
+
+# ── distro setup: /etc/wsl.conf ──────────────────────────────────────────────
+# No legacy script in wsl/ manages /etc/wsl.conf today (bootstrap.ps1 only
+# gets as far as invoking wsl --install; nothing on the Linux side ever wrote
+# this file) -- there is nothing to "port" here. This is new, narrowly-scoped
+# additive behaviour: enable systemd (required by several packages/apt.txt
+# entries, e.g. anything expecting `systemctl`/a user session bus) the same
+# declarative way the rest of this role manages state, rather than leaving it
+# as tribal knowledge that has to be set by hand on every fresh distro.
+#
+# wsl_manage_etc_wsl_conf is the master switch for this whole task file --
+# set false to leave /etc/wsl.conf alone entirely (e.g. a host that manages
+# it some other way). wsl_etc_wsl_conf_become mirrors
+# provision/roles/packages's packages_apt_become: /etc is root-owned, so a
+# real run needs become, but a --check dry run on a host without passwordless
+# sudo (or where become is deliberately withheld -- see README "Verifying on
+# a real WSL host") needs a knob to skip privilege escalation.
+wsl_manage_etc_wsl_conf: true
+wsl_etc_wsl_conf_become: true
+wsl_systemd_enabled: true

@@ -24,7 +24,8 @@ provision/
 │   └── group_vars/all.yml   # doc stub — the profile model lives in profile/
 ├── site.yml                 # entry point; reads profile/, -e profile=<tier> overrides
 └── roles/
-    └── packages/            # the spiked role
+    ├── packages/            # the spiked role
+    └── wsl/                 # WSL-distro-side machine state (issue #43)
 ```
 
 ## Running it
@@ -121,9 +122,16 @@ Per the standing "contribute the gap, don't shim it" preference:
   fresh WSL/Debian box (where the package is absent and sudo may be
   password-gated) are poor. Worth a docs/UX issue upstream.
 
+## Roles
+
+| Role | Tag | What | Docs |
+| --- | --- | --- | --- |
+| `packages` | `packages` | OS packages + profile-gated AI CLIs | `roles/packages/README.md` |
+| `wsl` | `wsl` | WSL-distro-side machine state: gitconfig credential migration, the Windows Credential Manager bridge, `/etc/wsl.conf` | `roles/wsl/README.md` |
+
 ## Not done here (by design)
 
 - winget / Windows branch — Phase 3.
-- Any role other than `packages`.
+- `macos` / `secrets` / `scheduled` roles — issues #42 / #44 / #45.
 - `bootstrap/` and `dotfiles/` layers.
 - Porting the rest of `install.py`.

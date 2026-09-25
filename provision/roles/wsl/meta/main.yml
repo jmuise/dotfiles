@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: wsl
+  namespace: dotfiles
+  author: dotfiles maintainers
+  description: >-
+    WSL-distro-side machine state: gitconfig credential migration, the
+    Windows Credential Manager bridge, and distro (wsl.conf) setup. Gated on
+    WSL detection; a no-op on every other platform.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions: [all]
+    - name: Ubuntu
+      versions: [all]
+
+# community.general provides git_config / git_config_info (gitconfig.local
+# migration + bridge) and ini_file (/etc/wsl.conf). It ships with the
+# `ansible` package (pipx install --include-deps ansible); listed here so
+# `ansible-galaxy role install` / lint knows about it.
+collections:
+  - community.general
+
+dependencies: []
