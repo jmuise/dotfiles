@@ -1,0 +1,267 @@
+---
+# OFF by default (scheduled_ansible_pull_enabled: false). This file runs on
+# every Linux host regardless of the flag, because turning the flag back OFF
+# has to clean up whatever the ON state previously installed -- see the
+# "role disabled" block at the bottom.
+#
+# Security / trust model (relates to #58): an ansible-pull timer re-clones
+# `scheduled_ansible_pull_repo` at `scheduled_ansible_pull_ref` on a fixed
+# schedule and RUNS whatever it finds there, unattended, with no human
+# review step in between. That is a materially bigger trust extension than
+# #58's `curl | bash` (which runs once, interactively, when a human invokes
+# the packages role) -- here, anyone who can land a commit on the pinned ref
+# gets unattended code execution on this machine on a schedule, indefinitely,
+# with no one watching. `scheduled_ansible_pull_ref` defaults to `main`
+# (spelled out deliberately, not left to "whatever HEAD is" -- see
+# defaults/main.yml) precisely so that choice is visible to a reviewer, not
+# a careless default. Do not point this at a branch you cannot
+# fully vouch for the history of, and never add a credential to
+# `scheduled_ansible_pull_repo` (a public HTTPS clone URL is the only
+# supported form -- if this ever needs a private repo, that is a new
+# decision, not an assumed extension of this one).
+
+- name: Validate ansible-pull is fully configured before enabling it
+  ansible.builtin.assert:
+    that:
+      - scheduled_ansible_pull_repo | length > 0
+      - scheduled_ansible_pull_ref | length > 0
+      - scheduled_ansible_pull_playbook | length > 0
+    fail_msg: >-
+      scheduled_ansible_pull_enabled is true but scheduled_ansible_pull_repo /
+      scheduled_ansible_pull_ref / scheduled_ansible_pull_playbook must all be
+      non-empty.
+    quiet: true
+  when: scheduled_ansible_pull_enabled | bool
+
+- name: Locate the ansible-pull executable's absolute path  # noqa: command-instead-of-shell
+  # The unit's ExecStart must be an absolute path, not a live PATH lookup
+  # (see "Build the ansible-pull command line" below for why `/usr/bin/env`
+  # is deliberately not used there). `command -v` is a shell builtin on
+  # every shell this needs to work on, so this genuinely needs `shell`, not
+  # `command` (there is no standalone `command` executable to hand to the
+  # `command` module). Read-only; safe under --check.
+  ansible.builtin.shell: command -v ansible-pull
+  register: _scheduled_pull_which
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: scheduled_ansible_pull_enabled | bool
+
+- name: Fail loudly if ansible-pull cannot be located on PATH
+  ansible.builtin.assert:
+    that:
+      - (_scheduled_pull_which.rc | default(1)) == 0
+      - (_scheduled_pull_which.stdout | default('')) | trim | length > 0
+    fail_msg: >-
+      ansible-pull was not found on PATH. Install it (e.g. `pipx install
+      --include-deps ansible`) before enabling scheduled_ansible_pull_enabled.
+    quiet: true
+  when: scheduled_ansible_pull_enabled | bool
+
+- name: Build the ansible-pull command line
+  # `-o` (--only-if-changed) makes each tick a no-op unless the pinned ref has
+  # moved, so this does not re-provision the whole machine on every timer
+  # fire. No inventory flag: ansible-pull defaults to a local connection
+  # against this host, matching provision/inventory/hosts.yml's own
+  # connection=local single-host model.
+  #
+  # Resolved to the absolute path found above rather than `/usr/bin/env
+  # ansible-pull` -- a systemd unit's ExecStart should not re-do a live PATH
+  # search on every single timer fire (whoever/whatever controls the user's
+  # PATH at execution time controls what actually runs). Note this is still
+  # a per-user install location (pipx installs to ~/.local/bin, which this
+  # same user can write to) -- there is no fully non-user-writable option
+  # for a per-user Ansible install, but pinning the resolved absolute path
+  # at deploy time at least removes the repeated PATH-lookup itself as an
+  # attack surface on every tick.
+  #
+  # Quoting (relates to #45's security review): this exact string is used two
+  # different ways -- as the cron `job:` field, executed via `/bin/sh -c`,
+  # and verbatim as a systemd unit's `ExecStart=`, which is NOT run through a
+  # shell but does its own shell-like tokenising (systemd.syntax(7)): it
+  # splits on whitespace and honours single-quoted sections as one word,
+  # same as /bin/sh does for the plain (no embedded-quote) values this role
+  # ever produces (a clone URL, a ref name, an absolute path). Every variable
+  # component below -- including the resolved ansible-pull path itself, in
+  # case a per-user install location ever contains a space -- is passed
+  # through the `quote` filter (shlex-style single-quoting) so both
+  # interpreters parse it identically, including when a value contains a
+  # space. Verified against both interpretations: see README.md's
+  # verification notes.
+  #
+  # `scheduled_ansible_pull_extra_args` is a LIST rather than a single
+  # pre-joined string for the same reason: a flag and its value (e.g. "-e",
+  # "profile=bare") are two separate command-line arguments. Quoting the
+  # whole pre-joined string as one token would collapse them into a single
+  # argument and break `-e`'s own parsing; quoting each list element
+  # independently (via `map('quote')`) and then space-joining the results
+  # keeps them as separate, correctly-quoted argv entries -- including when
+  # an individual element itself contains a space (e.g. "profile=my profile").
+  ansible.builtin.set_fact:
+    _scheduled_pull_command: >-
+      {{ _scheduled_pull_which.stdout | trim | quote }}
+      -U {{ scheduled_ansible_pull_repo | quote }}
+      -C {{ scheduled_ansible_pull_ref | quote }}
+      -d {{ scheduled_ansible_pull_dest | quote }}
+      -o
+      {{ '--verify-commit' if scheduled_ansible_pull_verify_commit | bool else '' }}
+      {{ ('--skip-tags ' ~ (scheduled_ansible_pull_skip_tags | join(',') | quote)) if (scheduled_ansible_pull_skip_tags | length > 0) else '' }}
+      {{ scheduled_ansible_pull_extra_args | map('quote') | join(' ') }}
+      {{ scheduled_ansible_pull_playbook | quote }}
+  when: scheduled_ansible_pull_enabled | bool
+
+- name: Determine the systemd user-unit paths
+  ansible.builtin.set_fact:
+    _scheduled_pull_unit_dir: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user"
+    _scheduled_pull_timer_name: "{{ scheduled_ansible_pull_unit_name }}.timer"
+    _scheduled_pull_service_name: "{{ scheduled_ansible_pull_unit_name }}.service"
+
+- name: Stat the systemd user timer unit (previously installed?)
+  ansible.builtin.stat:
+    path: "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_timer_name }}"
+  register: _scheduled_pull_existing_timer
+
+- name: Probe a reachable user systemd instance (systemctl --user)  # noqa: command-instead-of-module
+  # A host can report service_mgr == systemd (the init system) without a
+  # usable *user* instance -- no active login session / no linger enabled,
+  # common on freshly-booted containers and some WSL configurations (see
+  # README.md's "Upstream-contribution candidates": this gap is exactly the
+  # "ansible-pull ergonomics on WSL" item the epic calls out). Falling back
+  # to cron in that case is a deliberate, tested path, not a guess.
+  #
+  # ansible.builtin.systemd(_service) manages a named *unit*'s state; it has
+  # no "is a user instance reachable at all" probe, which is exactly what is
+  # needed before deciding whether ANY unit-management call is safe to make.
+  # `command` is the correct tool for that one read-only check.
+  ansible.builtin.command:
+    cmd: systemctl --user show-environment
+  register: _scheduled_pull_systemctl_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - scheduled_ansible_pull_enabled | bool
+    - ansible_facts['service_mgr'] == 'systemd'
+
+- name: Record whether a systemd user timer can be used here
+  ansible.builtin.set_fact:
+    _scheduled_use_systemd: >-
+      {{ ansible_facts['service_mgr'] == 'systemd'
+         and (_scheduled_pull_systemctl_probe.rc | default(1)) == 0 }}
+
+- name: Ensure the ansible-pull state directory exists
+  ansible.builtin.file:
+    path: "{{ scheduled_ansible_pull_dest | dirname }}"
+    state: directory
+    mode: "0700"
+  when: scheduled_ansible_pull_enabled | bool
+
+# ── Enabled + systemd user timer ────────────────────────────────────────────
+
+- name: Ensure the systemd user-unit directory exists
+  ansible.builtin.file:
+    path: "{{ _scheduled_pull_unit_dir }}"
+    state: directory
+    mode: "0700"
+  when: scheduled_ansible_pull_enabled | bool and _scheduled_use_systemd
+
+- name: Install the ansible-pull systemd service unit (oneshot)
+  ansible.builtin.template:
+    src: ansible-pull.service.j2
+    dest: "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_service_name }}"
+    mode: "0600"
+  when: scheduled_ansible_pull_enabled | bool and _scheduled_use_systemd
+  register: _scheduled_pull_service_file
+
+- name: Install the ansible-pull systemd timer unit
+  ansible.builtin.template:
+    src: ansible-pull.timer.j2
+    dest: "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_timer_name }}"
+    mode: "0600"
+  when: scheduled_ansible_pull_enabled | bool and _scheduled_use_systemd
+  register: _scheduled_pull_timer_file
+
+- name: Reload the user systemd daemon after unit changes
+  ansible.builtin.systemd:
+    scope: user
+    daemon_reload: true
+  when: >-
+    scheduled_ansible_pull_enabled | bool and _scheduled_use_systemd
+    and (_scheduled_pull_service_file.changed or _scheduled_pull_timer_file.changed)
+
+- name: Enable and start the ansible-pull timer
+  ansible.builtin.systemd:
+    name: "{{ _scheduled_pull_timer_name }}"
+    scope: user
+    enabled: true
+    state: started
+  when: scheduled_ansible_pull_enabled | bool and _scheduled_use_systemd
+
+- name: Ensure no leftover cron entry when using the systemd timer
+  ansible.builtin.cron:
+    name: "{{ scheduled_ansible_pull_cron_name }}"
+    state: absent
+  when: scheduled_ansible_pull_enabled | bool and _scheduled_use_systemd
+
+# ── Enabled + cron fallback (no reachable user systemd) ─────────────────────
+
+- name: Install the ansible-pull cron entry (no reachable systemd --user)
+  ansible.builtin.cron:
+    name: "{{ scheduled_ansible_pull_cron_name }}"
+    minute: "{{ scheduled_ansible_pull_cron_minute }}"
+    hour: "{{ scheduled_ansible_pull_cron_hour }}"
+    weekday: "{{ scheduled_ansible_pull_cron_weekday }}"
+    job: "{{ _scheduled_pull_command }} >> {{ scheduled_ansible_pull_log | quote }} 2>&1"
+  when: scheduled_ansible_pull_enabled | bool and not _scheduled_use_systemd
+
+- name: Disable and stop a leftover systemd timer when falling back to cron
+  ansible.builtin.systemd:
+    name: "{{ _scheduled_pull_timer_name }}"
+    scope: user
+    enabled: false
+    state: stopped
+  when: >-
+    scheduled_ansible_pull_enabled | bool and not _scheduled_use_systemd
+    and _scheduled_pull_existing_timer.stat.exists
+
+- name: Remove leftover systemd unit files when falling back to cron
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_timer_name }}"
+    - "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_service_name }}"
+  when: >-
+    scheduled_ansible_pull_enabled | bool and not _scheduled_use_systemd
+    and _scheduled_pull_existing_timer.stat.exists
+
+# ── Disabled: tear down whichever mechanism was present ─────────────────────
+
+- name: Disable and stop the ansible-pull systemd timer (role disabled)
+  ansible.builtin.systemd:
+    name: "{{ _scheduled_pull_timer_name }}"
+    scope: user
+    enabled: false
+    state: stopped
+  when: not (scheduled_ansible_pull_enabled | bool) and _scheduled_pull_existing_timer.stat.exists
+
+- name: Remove the ansible-pull systemd unit files (role disabled)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_timer_name }}"
+    - "{{ _scheduled_pull_unit_dir }}/{{ _scheduled_pull_service_name }}"
+  when: not (scheduled_ansible_pull_enabled | bool) and _scheduled_pull_existing_timer.stat.exists
+
+- name: Reload the user systemd daemon after unit removal (role disabled)
+  ansible.builtin.systemd:
+    scope: user
+    daemon_reload: true
+  when: not (scheduled_ansible_pull_enabled | bool) and _scheduled_pull_existing_timer.stat.exists
+
+- name: Remove the ansible-pull cron entry (role disabled)
+  ansible.builtin.cron:
+    name: "{{ scheduled_ansible_pull_cron_name }}"
+    state: absent
+  when: not (scheduled_ansible_pull_enabled | bool)

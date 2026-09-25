@@ -1,0 +1,14 @@
+# Managed by provision/roles/scheduled (Ansible). Do not edit by hand --
+# re-running the role overwrites this file. Edit
+# provision/roles/scheduled/templates/ansible-pull.timer.j2 and
+# scheduled_ansible_pull_oncalendar in defaults/main.yml instead.
+[Unit]
+Description=Timer for dotfiles ansible-pull ({{ scheduled_ansible_pull_repo }}@{{ scheduled_ansible_pull_ref }})
+
+[Timer]
+OnCalendar={{ scheduled_ansible_pull_oncalendar }}
+Persistent=true
+Unit={{ _scheduled_pull_service_name }}
+
+[Install]
+WantedBy=timers.target
