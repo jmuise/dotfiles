@@ -1,0 +1,118 @@
+---
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  WRITTEN BUT UNVERIFIED ON WINDOWS.                                      │
+# │  No Windows host is reachable from the environment this role was built  │
+# │  in, and WinRM must not be enabled on that host per this task's brief.  │
+# │  This branch has never actually run. Do not treat it as tested -- treat │
+# │  it exactly like tasks/homebrew.yml. The first person with a reachable  │
+# │  Windows target (WinRM configured) should dry-run `site.yml --check     │
+# │  --diff` against it and report back before this is trusted.             │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# Ansible-role equivalent of install.ps1's Scoop + winget package-apply
+# sections (packages/scoop.txt, packages/winget.txt); the role does NOT keep
+# its own package lists, same rule as every other OS branch in this role.
+#
+# community.windows.win_scoop bootstraps Scoop itself if it's missing (no
+# separate "install Scoop" step needed, unlike install.ps1's manual
+# Invoke-RestMethod bootstrap). community.windows.win_scoop_bucket is
+# idempotent on its own (checks `scoop bucket list` first), so buckets are
+# added before the bucket-qualified packages that need them, same ordering
+# install.ps1 uses.
+#
+# winget has NO native Ansible module in ansible.windows or community.windows
+# as of the versions installed while writing this role (checked via
+# `ansible-doc -l` against both collections: only win_package -- which
+# installs local .msi/.exe payloads, not by-ID from a Windows Package
+# Manager source -- and win_command/win_shell exist). This is the
+# upstream-contribution candidate flagged in provision/README.md: a
+# hypothetical community.windows.win_winget (wrapping `winget install/list
+# --id` with real check-mode/idempotency support) would remove the
+# win_command fallback below entirely. Per the "contribute the gap, don't
+# shim it" standing preference, that gap should be raised upstream rather
+# than grown into a bespoke module here.
+#
+# Manifests live on the *controller*, not necessarily on the Windows target
+# (unlike the Debian/Darwin branches, where target == controller today via
+# inventory/hosts.yml's connection: local) -- slurp below is explicitly
+# delegated to localhost so it reads the repo checkout, not the remote host.
+
+- name: Read the Scoop manifest (packages/scoop.txt)
+  ansible.builtin.slurp:
+    src: "{{ packages_scoop_manifest }}"
+  register: _packages_scoop_raw
+  delegate_to: localhost
+  become: false
+
+- name: Resolve the Scoop manifest to a package list
+  ansible.builtin.set_fact:
+    packages_scoop_wanted: >-
+      {{
+        (_packages_scoop_raw.content | b64decode).splitlines()
+        | map('regex_replace', '#.*$', '')
+        | map('trim')
+        | reject('equalto', '')
+        | list
+      }}
+
+- name: Split the Scoop manifest into main-bucket and bucket-qualified entries
+  ansible.builtin.set_fact:
+    packages_scoop_main: "{{ packages_scoop_wanted | reject('search', '/') | list }}"
+    packages_scoop_bucketed: "{{ packages_scoop_wanted | select('search', '/') | list }}"
+
+- name: Install main-bucket Scoop packages (bootstraps Scoop itself if missing)
+  community.windows.win_scoop:
+    name: "{{ packages_scoop_main }}"
+  when: packages_scoop_main | length > 0
+
+- name: Ensure the non-main Scoop buckets referenced in scoop.txt are added
+  community.windows.win_scoop_bucket:
+    name: "{{ item }}"
+    state: present
+  loop: >-
+    {{
+      packages_scoop_bucketed
+      | map('regex_replace', '^([^/]+)/.*$', '\1')
+      | unique | list
+    }}
+
+- name: Install bucket-qualified Scoop packages
+  community.windows.win_scoop:
+    name: "{{ packages_scoop_bucketed }}"
+  when: packages_scoop_bucketed | length > 0
+
+- name: Read the winget manifest (packages/winget.txt)
+  ansible.builtin.slurp:
+    src: "{{ packages_winget_manifest }}"
+  register: _packages_winget_raw
+  delegate_to: localhost
+  become: false
+
+- name: Resolve the winget manifest to a package-ID list
+  ansible.builtin.set_fact:
+    packages_winget_wanted: >-
+      {{
+        (_packages_winget_raw.content | b64decode).splitlines()
+        | map('regex_replace', '#.*$', '')
+        | map('trim')
+        | reject('equalto', '')
+        | list
+      }}
+
+- name: Check which winget packages are already installed
+  ansible.windows.win_command: "winget list --id {{ item }} -e --accept-source-agreements"
+  register: _packages_winget_check
+  loop: "{{ packages_winget_wanted }}"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install missing winget packages (no native module upstream -- see note above)
+  ansible.windows.win_command: >-
+    winget install --id {{ item.item }} -e --silent
+    --accept-package-agreements --accept-source-agreements
+  loop: "{{ _packages_winget_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0
+  changed_when: true

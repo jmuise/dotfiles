@@ -1,0 +1,104 @@
+---
+# Retires the binary-install portion of legacy/provision_legacy.py's
+# "lazygit" section (#41). The config symlink itself stays in
+# install.py/dotfiles linking -- out of scope for this role. Debian-family
+# only -- macOS gets lazygit from the Brewfile (see tasks/homebrew.yml).
+#
+# Version is resolved from the GitHub API at run time (latest release),
+# unpinned upstream, same as legacy; only installed when absent -- the same
+# gate legacy used.
+
+- name: Check whether lazygit is already on PATH
+  ansible.builtin.command: sh -c 'command -v lazygit'
+  environment:
+    PATH: "{{ packages_search_path }}"
+  register: _packages_lazygit_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Skipped outright under --check: ansible.builtin.tempfile and
+# ansible.builtin.unarchive both only partially support check mode (see
+# neovim.yml's comment on the same pattern), so the whole install is gated
+# on `not ansible_check_mode` and previewed with an explicit debug task
+# instead -- the honest equivalent of legacy's own `if DRY_RUN: print(...)`
+# branch for this same install.
+- name: Preview the lazygit install (check mode)
+  ansible.builtin.debug:
+    msg: "would install lazygit to ~/.local/bin (GitHub releases)"
+  when:
+    - _packages_lazygit_present.rc != 0
+    - ansible_check_mode
+
+- name: Install lazygit (latest GitHub release, unpinned upstream)
+  when:
+    - _packages_lazygit_present.rc != 0
+    - not ansible_check_mode
+  block:
+    - name: Map machine architecture to lazygit's release naming scheme
+      ansible.builtin.set_fact:
+        _packages_lazygit_arch: "{{ 'x86_64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
+
+    - name: Look up the latest lazygit release tag
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
+        return_content: true
+      register: _packages_lazygit_release
+
+    - name: Record the latest lazygit version
+      ansible.builtin.set_fact:
+        _packages_lazygit_version: "{{ _packages_lazygit_release.json.tag_name | regex_replace('^v', '') }}"
+
+    - name: Create a temp file for the lazygit download
+      ansible.builtin.tempfile:
+        state: file
+        suffix: lazygit.tar.gz
+      register: _packages_lazygit_tmp
+
+    - name: Download the lazygit release tarball
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/jesseduffield/lazygit/releases/download/v{{ _packages_lazygit_version
+          }}/lazygit_{{ _packages_lazygit_version }}_Linux_{{ _packages_lazygit_arch }}.tar.gz
+        dest: "{{ _packages_lazygit_tmp.path }}"
+        mode: "0644"
+        # force: true -- see neovim.yml's comment on the same option: the
+        # tempfile task above pre-creates dest as an empty file, and without
+        # force, get_url's conditional GET against that fresh mtime can get
+        # a 304 from GitHub and silently leave a 0-byte file.
+        force: true
+
+    - name: Create a temp directory to extract into
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: lazygit-extract
+      register: _packages_lazygit_extract_dir
+
+    - name: Extract the lazygit binary
+      ansible.builtin.unarchive:
+        src: "{{ _packages_lazygit_tmp.path }}"
+        dest: "{{ _packages_lazygit_extract_dir.path }}"
+        remote_src: true
+        include:
+          - lazygit
+
+    - name: Ensure ~/.local/bin exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.local/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Install the lazygit binary
+      ansible.builtin.copy:
+        src: "{{ _packages_lazygit_extract_dir.path }}/lazygit"
+        dest: "{{ ansible_env.HOME }}/.local/bin/lazygit"
+        mode: "0755"
+        remote_src: true
+
+    - name: Remove temp download and extraction directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ _packages_lazygit_tmp.path }}"
+        - "{{ _packages_lazygit_extract_dir.path }}"

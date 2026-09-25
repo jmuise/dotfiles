@@ -10,9 +10,13 @@ Part of the three-layer provisioning split:
 
 Ansible (not Nix) is the locked choice for Layer 1.
 
-This directory is currently a **spike**: it wires up exactly one role,
-`packages`, end to end so the shape of Layer 1 is proven before the rest of
-`install.py` is ported.
+This directory started as a **spike** wiring up exactly one role,
+`packages`, end to end (issue #36) so the shape of Layer 1 would be proven
+before the rest of `install.py`/`legacy/provision_legacy.py` was ported.
+`packages` has since grown to full parity with every legacy section tagged
+`Retires with: #41` (issue #41, epic #35) — see
+`roles/packages/README.md` for what it covers and its verification status
+per OS family.
 
 ## Layout
 
@@ -83,11 +87,12 @@ Strictly nested — each tier is a superset of the one before:
 The `packages` role does **not** keep its own package lists. It reads the
 manifests that already exist at the repo root:
 
-| Manifest             | OS family | Status in this spike           |
-| -------------------- | --------- | ------------------------------ |
-| `packages/apt.txt`   | Debian    | **verified on WSL** (`--check --diff`) |
-| `packages/Brewfile`  | macOS     | **written but UNVERIFIED** — no Mac was reachable; never executed |
-| `packages/winget.txt` | Windows   | **deferred to Phase 3** — not consumed here |
+| Manifest              | OS family | Status                                                         |
+| --------------------- | --------- | ---------------------------------------------------------------- |
+| `packages/apt.txt`    | Debian    | **verified** — real run + idempotent re-run, trixie & bookworm containers |
+| `packages/Brewfile`   | macOS     | **written but UNVERIFIED** — no Mac was reachable; never executed |
+| `packages/scoop.txt`  | Windows   | **written but UNVERIFIED** — no Windows host reachable; never executed |
+| `packages/winget.txt` | Windows   | **written but UNVERIFIED** — no Windows host reachable; never executed |
 
 ## Verifying on WSL
 
@@ -120,10 +125,18 @@ Per the standing "contribute the gap, don't shim it" preference:
   a runtime error to guide you. Not a bug exactly, but the ergonomics on a
   fresh WSL/Debian box (where the package is absent and sudo may be
   password-gated) are poor. Worth a docs/UX issue upstream.
+- **Neither `ansible.windows` nor `community.windows` has a native winget
+  module.** `win_package` installs local `.msi`/`.exe` payloads, not
+  by-ID packages from a Windows Package Manager source; there is no
+  `win_winget` wrapping `winget install/list --id` with real
+  check-mode/idempotency support. `roles/packages/tasks/windows.yml` falls
+  back to `ansible.windows.win_command` for exactly this reason. A
+  first-class `community.windows.win_winget` would remove that fallback.
 
 ## Not done here (by design)
 
-- winget / Windows branch — Phase 3.
 - Any role other than `packages`.
 - `bootstrap/` and `dotfiles/` layers.
-- Porting the rest of `install.py`.
+- Porting the rest of `install.py` / `legacy/provision_legacy.py`.
+- Wiring `provision/` to run against/inside a devcontainer target — see
+  `roles/packages/README.md`'s "Devcontainer targets" section.

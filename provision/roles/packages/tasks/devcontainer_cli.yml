@@ -1,0 +1,49 @@
+---
+# Retires legacy/provision_legacy.py's "devcontainer CLI" section (#41). Not
+# an AI CLI -- not profile-gated, installed regardless of profile, same as
+# legacy. Backs tools/start-project.sh (the `sp` alias). Only imported for
+# non-Windows targets (see tasks/main.yml) -- native Windows forwards
+# `devcontainer` into WSL instead (powershell/profile.ps1, out of scope here).
+
+- name: Check whether the devcontainer CLI is already on PATH
+  ansible.builtin.command: sh -c 'command -v devcontainer'
+  environment:
+    PATH: "{{ packages_search_path }}"
+  register: _packages_devcontainer_cli_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# community.general.npm hard-requires the npm executable to exist, even
+# under --check -- see ai_clis.yml's comment on the same pattern. On a truly
+# fresh box, apt.yml's nodejs/npm install is only *simulated* under --check,
+# so probe first and preview instead of invoking npm when it's not really
+# there.
+- name: Check whether npm is available
+  ansible.builtin.command: sh -c 'command -v npm'
+  register: _packages_devcontainer_npm_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _packages_devcontainer_cli_present.rc != 0
+
+- name: Preview the devcontainer CLI install (check mode, npm not yet available)
+  ansible.builtin.debug:
+    msg: >-
+      would ensure @devcontainers/cli@{{ packages_devcontainers_cli_version }}
+      is installed (npm global) once nodejs/npm from packages/apt.txt is
+      actually installed
+  when:
+    - _packages_devcontainer_cli_present.rc != 0
+    - ansible_check_mode
+    - _packages_devcontainer_npm_present.rc != 0
+
+- name: Ensure the devcontainer CLI is installed (npm global, pinned)
+  community.general.npm:
+    name: "@devcontainers/cli"
+    version: "{{ packages_devcontainers_cli_version }}"
+    global: true
+    state: present
+  when:
+    - _packages_devcontainer_cli_present.rc != 0
+    - not (ansible_check_mode and _packages_devcontainer_npm_present.rc != 0)
