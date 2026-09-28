@@ -29,12 +29,6 @@ Four scenarios against THIS branch's (fixed) install.py:
   (d) a linked git worktree -> refused; the shared primary .git/config is
       unchanged, a warning is printed.
 
-Two more scenarios prove the bug is real, not merely asserted: (a) and (b)
-are repeated against install.py as it exists on `main` (fetched with `git
-archive main | tar -x`, never a checkout -- this worktree's own HEAD and
-working tree are never touched), and are asserted to actually corrupt the
-outer/leaked repo's config, which is exactly the defect this PR fixes.
-
 Every scenario runs install.py for real (never --dry-run) against a
 throwaway `git init`-ed (or `git worktree add`-ed) COPY, with a sandboxed
 $HOME, never this worktree or the canonical checkout -- same pattern as
@@ -94,42 +88,6 @@ def _copy_tracked_tree(dest: Path) -> None:
         dst = dest / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-
-
-def _ensure_local_main_ref() -> None:
-    """Make sure this worktree's shared repo has a local `main` ref to archive.
-
-    CI checks out a PR's merge/head ref, not `main` by name, and may not have
-    fetched it at all. `git archive main` below needs a resolvable `main`, so
-    this brings one in via `git fetch` if it's missing. This only ever
-    updates a ref (`refs/heads/main`) -- it never touches HEAD, the index, or
-    any working tree, so it cannot check anything out.
-    """
-    probe = subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "--verify", "-q", "main"],
-        capture_output=True, text=True, env=_ISOLATE_GIT_ENV,
-    )
-    if probe.returncode == 0:
-        return
-    subprocess.run(
-        ["git", "-C", str(REPO), "fetch", "--quiet", "origin", "main:refs/heads/main"],
-        check=True, env=_ISOLATE_GIT_ENV,
-    )
-
-
-def _archive_main_tree(dest: Path) -> None:
-    """Extract `main`'s full tree into `dest` (which must already exist) via
-    `git archive main | tar -x` -- never `git checkout`/`git switch`, so this
-    worktree's own HEAD and working tree are never touched."""
-    _ensure_local_main_ref()
-    archive = subprocess.run(
-        ["git", "-C", str(REPO), "archive", "main"],
-        capture_output=True, env=_ISOLATE_GIT_ENV, check=True,
-    )
-    subprocess.run(
-        ["tar", "-x", "-C", str(dest)],
-        input=archive.stdout, check=True,
-    )
 
 
 def _stub_legacy_provisioner(dotfiles: Path) -> None:
@@ -203,34 +161,6 @@ class NestedInsideAnotherRepoTest(TempDirMixin, unittest.TestCase):
         self.assertIn("issue #70", result.stdout)
         self.assertIn("Refusing to write core.hooksPath", result.stdout)
 
-    def test_bug_reproduces_on_main_install_py(self):
-        """Same scenario, but with install.py exactly as it is on `main`
-        (fetched via `git archive`, never a checkout) -- proves the bug this
-        PR fixes is real, not just a hypothetical the new checks guard
-        against a strawman."""
-        outer = self.root / "outer-main"
-        outer.mkdir()
-        _git("init", "-q", cwd=outer)
-        dotfiles = outer / "nested" / "dotfiles"
-        dotfiles.mkdir(parents=True)
-        _archive_main_tree(dotfiles)
-        _stub_legacy_provisioner(dotfiles)
-        home = self.root / "home-main"
-        _seed_home(home)
-
-        self.assertEqual(_hooks_path_of(outer), "")
-
-        _run_install(dotfiles, home)
-
-        corrupted = _hooks_path_of(outer)
-        self.assertEqual(
-            corrupted, str(dotfiles / "hooks"),
-            "main's install.py is expected to (wrongly) repoint the OUTER "
-            "repo's core.hooksPath at the nested copy's hooks/ dir -- if this "
-            "assertion fails, main's install.py is no longer vulnerable and "
-            "this demonstration (not the fix itself) needs updating",
-        )
-
 
 class GitDirEnvLeakTest(TempDirMixin, unittest.TestCase):
     """(b) GIT_DIR/GIT_WORK_TREE leaked in via the environment."""
@@ -261,30 +191,6 @@ class GitDirEnvLeakTest(TempDirMixin, unittest.TestCase):
                           "the repo named by the leaked GIT_DIR must be unaffected")
         self.assertIn("issue #70", result.stdout)
         self.assertIn("Refusing to write core.hooksPath", result.stdout)
-
-    def test_bug_reproduces_on_main_install_py(self):
-        other = self.root / "other-main"
-        other.mkdir()
-        _git("init", "-q", cwd=other)
-        dotfiles = self.root / "dotfiles-main"
-        dotfiles.mkdir()
-        _archive_main_tree(dotfiles)
-        _stub_legacy_provisioner(dotfiles)
-        home = self.root / "home-main"
-        _seed_home(home)
-        leak_env = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}
-
-        self.assertEqual(_hooks_path_of(other), "")
-
-        _run_install(dotfiles, home, leak_env)
-
-        self.assertEqual(
-            _hooks_path_of(other), str(dotfiles / "hooks"),
-            "main's install.py is expected to (wrongly) honor the leaked "
-            "GIT_DIR and repoint the OTHER repo's core.hooksPath -- if this "
-            "assertion fails, main's install.py is no longer vulnerable and "
-            "this demonstration (not the fix itself) needs updating",
-        )
 
 
 class NormalCaseStillSetsHooksPathTest(TempDirMixin, unittest.TestCase):
