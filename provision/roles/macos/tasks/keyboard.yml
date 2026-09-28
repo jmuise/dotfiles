@@ -1,0 +1,31 @@
+---
+# ── Keyboard ──────────────────────────────────────────────────────────────────
+# macos/defaults.sh lines:
+#   defaults write NSGlobalDomain KeyRepeat         -int 2
+#   defaults write NSGlobalDomain InitialKeyRepeat  -int 15
+#   defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
+#
+# None of these are cached by Finder/Dock/SystemUIServer -- the original
+# script does not restart anything for this section, and neither does this
+# role.
+
+- name: Set key repeat rate
+  community.general.osx_defaults:
+    domain: NSGlobalDomain
+    key: KeyRepeat
+    type: int
+    value: 2
+
+- name: Set initial key repeat delay
+  community.general.osx_defaults:
+    domain: NSGlobalDomain
+    key: InitialKeyRepeat
+    type: int
+    value: 15
+
+- name: Prefer key repeat over the press-and-hold accent popup
+  community.general.osx_defaults:
+    domain: NSGlobalDomain
+    key: ApplePressAndHoldEnabled
+    type: bool
+    value: false

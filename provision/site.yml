@@ -23,8 +23,9 @@
 # from the file. An invalid value (in the file, or passed with -e) fails the
 # play here, loudly, before any package work happens.
 #
-# This spike wires up exactly one role (`packages`). Later layers/roles
-# (shell, git config, editor, secrets plumbing) hang off this same play.
+# This started as a spike wiring up exactly one role (`packages`); `macos`
+# (#42) is the second. Later roles (wsl, secrets, scheduled, ...) hang off
+# this same play.
 
 - name: Provision machine state
   hosts: all
@@ -115,3 +116,12 @@
   roles:
     - role: packages
       tags: [packages]
+    # macOS system defaults (Finder/Dock/keyboard/trackpad/screenshots/
+    # Safari/Activity Monitor), converted from macos/defaults.sh (#42).
+    # UNVERIFIED ON macOS -- see roles/macos/README.md. Gated on os_family
+    # rather than profile: these are OS ergonomics, not AI tooling, so every
+    # profile (bare/inline/agentic) wants them the same way `packages`
+    # dispatches apt vs. Homebrew on os_family rather than profile.
+    - role: macos
+      tags: [macos]
+      when: ansible_facts['os_family'] == 'Darwin'
