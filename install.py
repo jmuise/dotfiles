@@ -359,22 +359,138 @@ if not effective_name or not effective_email:
 # absolute path pins the hook to the checkout that installed it.
 # hooks/_dispatch.sh still validates the working tree against the receipt
 # regardless of this; the absolute path is defence in depth.
+#
+# issue #70: an absolute path is not enough on its own. `git -C <DOTFILES>
+# config ...` still has to discover a REPOSITORY before it can write to it,
+# and that discovery can land somewhere other than <DOTFILES> two ways: (1)
+# GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / etc., if inherited from the
+# calling process (for example when install.py runs from inside a git hook),
+# override discovery outright; (2) <DOTFILES> may simply not be its own repo
+# root -- a plain copy of the tree nested inside another repo walks up and
+# finds THAT repo instead. Either way the write lands in a different
+# repository's config. This is exactly how it happened for real: the
+# canonical checkout's core.hooksPath got silently repointed at a deleted
+# /tmp scratch directory, and git then silently skipped every hook (including
+# the never-merge pre-commit guard) with no error at all.
+#
+# So every git subprocess call below that writes or reads config for THIS
+# checkout runs with scrubbed_git_env() (env stripped of every repo-selecting
+# GIT_* var), and the write itself is gated on a verification that `git -C
+# <DOTFILES> rev-parse --show-toplevel` actually resolves back to <DOTFILES>
+# under that scrubbed environment. A linked worktree passes that check (its
+# own toplevel IS itself) but still shares its PRIMARY checkout's
+# .git/config, so it gets a second, deliberate check below (--git-dir vs
+# --git-common-dir) and is refused too -- writing core.hooksPath from a
+# worktree would repoint hooks for every worktree of that repo, including the
+# primary one, from a tree that may be unreviewed or transient.
+#
+# On any of this, warn clearly (naming both paths), SKIP the write, and let
+# the rest of the install continue -- never abort. --dry-run never reaches
+# any of these subprocess calls, so it stays side-effect-free exactly as
+# before.
+_GIT_REPO_ENV_VARS = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+)
+
+def scrubbed_git_env() -> dict[str, str]:
+    """A fresh copy of the environment with every repo-selecting GIT_* var
+    removed, so a `git -C <DOTFILES> ...` call can't be redirected at a
+    different repository by something inherited from the calling process."""
+    env = dict(os.environ)
+    for var in _GIT_REPO_ENV_VARS:
+        env.pop(var, None)
+    for var in [k for k in env if k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))]:
+        env.pop(var, None)
+    return env
+
+def _resolve_git_path(raw: str) -> Path | None:
+    """Resolve a path `git rev-parse` printed (--git-dir/--git-common-dir can
+    be relative to DOTFILES) to an absolute, symlink-resolved Path, or None."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    if not p.is_absolute():
+        p = DOTFILES / p
+    try:
+        return p.resolve()
+    except OSError:
+        return None
+
 hooks_path = str(DOTFILES / "hooks")
 log("Git hooks...")
 if DRY_RUN:
     print(f"  git config core.hooksPath {hooks_path}")
 else:
-    subprocess.run(["git", "-C", str(DOTFILES), "config", "core.hooksPath", hooks_path], check=True)
-    for h in (DOTFILES / "hooks").glob("*"):
-        h.chmod(h.stat().st_mode | 0o111)
-    success(f"core.hooksPath -> {hooks_path}")
+    _git_env = scrubbed_git_env()
+    _toplevel = subprocess.run(
+        ["git", "-C", str(DOTFILES), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, env=_git_env,
+    )
+    _dotfiles_resolved = DOTFILES.resolve()
+    _toplevel_resolved = (
+        _resolve_git_path(_toplevel.stdout) if _toplevel.returncode == 0 else None
+    )
 
-existing_global_hooks = run("git", "config", "--global", "--get", "core.hooksPath").stdout.strip()
+    if _toplevel_resolved != _dotfiles_resolved:
+        warn(
+            f"'git -C {DOTFILES} rev-parse --show-toplevel' resolved to "
+            f"{_toplevel_resolved or '<nothing -- not a git repository>'}, not "
+            f"{_dotfiles_resolved} itself (issue #70: this checkout is not its "
+            "own git repo root, or a GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/etc. "
+            "environment variable is redirecting git elsewhere). Refusing to "
+            "write core.hooksPath so no OTHER repository's config gets "
+            "touched -- hooks will NOT auto-sync here until this is fixed and "
+            "install.py is re-run. The rest of this install continues."
+        )
+    else:
+        _git_dir = subprocess.run(
+            ["git", "-C", str(DOTFILES), "rev-parse", "--git-dir"],
+            capture_output=True, text=True, env=_git_env,
+        )
+        _git_common_dir = subprocess.run(
+            ["git", "-C", str(DOTFILES), "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, env=_git_env,
+        )
+        _gd = _resolve_git_path(_git_dir.stdout) if _git_dir.returncode == 0 else None
+        _gcd = _resolve_git_path(_git_common_dir.stdout) if _git_common_dir.returncode == 0 else None
+
+        if _gd is None or _gcd is None:
+            warn(
+                f"Could not determine whether {DOTFILES} is a linked git "
+                "worktree ('git rev-parse --git-dir'/'--git-common-dir' "
+                "failed) -- refusing to write core.hooksPath. The rest of "
+                "this install continues."
+            )
+        elif _gd != _gcd:
+            warn(
+                f"{DOTFILES} is a linked git worktree (--git-dir {_gd} != "
+                f"--git-common-dir {_gcd}). core.hooksPath lives in the "
+                "PRIMARY checkout's shared .git/config, which every worktree "
+                "of this repo shares -- writing it from here would repoint "
+                "hooks for all of them, including the primary checkout. "
+                "Refusing (issue #70). Run install.sh from the primary "
+                "checkout instead. The rest of this install continues."
+            )
+        else:
+            subprocess.run(
+                ["git", "-C", str(DOTFILES), "config", "core.hooksPath", hooks_path],
+                check=True, env=_git_env,
+            )
+            for h in (DOTFILES / "hooks").glob("*"):
+                h.chmod(h.stat().st_mode | 0o111)
+            success(f"core.hooksPath -> {hooks_path}")
+
+existing_global_hooks = run(
+    "git", "config", "--global", "--get", "core.hooksPath", env=scrubbed_git_env()
+).stdout.strip()
 if existing_global_hooks == str(DOTFILES / "git" / "global-hooks"):
     if DRY_RUN:
         print("  git config --global --unset core.hooksPath")
     else:
-        run("git", "config", "--global", "--unset", "core.hooksPath")
+        run("git", "config", "--global", "--unset", "core.hooksPath", env=scrubbed_git_env())
         success("Removed global core.hooksPath (identity guard retired in favor of shell/doctor.sh)")
 
 # ── install receipt ──────────────────────────────────────────────────────────
