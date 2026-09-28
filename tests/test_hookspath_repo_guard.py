@@ -225,6 +225,13 @@ class LinkedWorktreeTest(TempDirMixin, unittest.TestCase):
         _copy_tracked_tree(self.primary)
         _stub_legacy_provisioner(self.primary)
         _git("init", "-q", cwd=self.primary)
+        # Committing this many files can cross git's loose-object gc.auto
+        # threshold, which forks a detached `git gc --auto` that keeps
+        # writing into .git/objects/ after `commit` returns -- racing this
+        # test's tempdir cleanup and intermittently failing it with
+        # "OSError: Directory not empty: 'objects'". Not needed for a
+        # throwaway repo that's about to be deleted.
+        _git("config", "gc.auto", "0", cwd=self.primary)
         _git("add", "-A", cwd=self.primary)
         _git(
             "-c", "user.name=Test", "-c", "user.email=test@example.com",
