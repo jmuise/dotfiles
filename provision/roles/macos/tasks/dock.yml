@@ -1,0 +1,39 @@
+---
+# ── Dock ──────────────────────────────────────────────────────────────────────
+# macos/defaults.sh lines:
+#   defaults write com.apple.dock autohide       -bool true
+#   defaults write com.apple.dock autohide-delay -float 0.1
+#   defaults write com.apple.dock tilesize       -int 48
+#   defaults write com.apple.dock show-recents   -bool false
+
+- name: Auto-hide the Dock
+  community.general.osx_defaults:
+    domain: com.apple.dock
+    key: autohide
+    type: bool
+    value: true
+  notify: Restart Dock
+
+- name: Set Dock auto-hide delay
+  community.general.osx_defaults:
+    domain: com.apple.dock
+    key: autohide-delay
+    type: float
+    value: 0.1
+  notify: Restart Dock
+
+- name: Set Dock icon tile size
+  community.general.osx_defaults:
+    domain: com.apple.dock
+    key: tilesize
+    type: int
+    value: 48
+  notify: Restart Dock
+
+- name: Hide recent applications from the Dock
+  community.general.osx_defaults:
+    domain: com.apple.dock
+    key: show-recents
+    type: bool
+    value: false
+  notify: Restart Dock
