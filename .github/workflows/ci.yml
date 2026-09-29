@@ -23,11 +23,16 @@ jobs:
   # against a throwaway scratch copy -- see that file's docstring) to
   # regression-test the AI-profile gate's tri-state (invalid profile =
   # leave-alone, not a silent unlink) fixed as part of PR #64's security
-  # review; and tests/test_dotfiles_cli.py, which does the same for the
+  # review; tests/test_dotfiles_cli.py, which does the same for the
   # `dotfiles profile` CLI added in #40 (tools/dotfiles.py) -- invalid-name
   # rejection, the ancestor-symlink warn+skip, atomic write, --dry-run, and
   # the Ansible hand-off, all against real subprocess runs in a sandbox
-  # $HOME, never mocked.
+  # $HOME, never mocked; and tests/test_hookspath_repo_guard.py, which
+  # regression-tests issue #70 (install.py could repoint another
+  # repository's core.hooksPath -- a copy nested in an outer repo, a leaked
+  # GIT_DIR, or a linked worktree sharing a primary checkout's .git/config)
+  # and demonstrates, via `git archive main`, that the vulnerable behaviour
+  # is real on main and fixed on this branch.
   shell-python-syntax:
     name: shell-python-syntax
     runs-on: ubuntu-latest
@@ -57,6 +62,9 @@ jobs:
 
       - name: python3 tests/test_dotfiles_cli.py (dotfiles profile CLI)
         run: python3 tests/test_dotfiles_cli.py -v
+
+      - name: python3 tests/test_hookspath_repo_guard.py (issue #70 core.hooksPath repo guard)
+        run: python3 tests/test_hookspath_repo_guard.py -v
 
       - name: bash -n on every tracked shell script
         run: |

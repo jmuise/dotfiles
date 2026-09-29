@@ -1,0 +1,169 @@
+---
+# Ports wsl/bridge-gcm.sh: point WSL git at the Windows-side Git Credential
+# Manager so credentials are shared with native Windows, since a fresh WSL
+# Debian install has no credential helper of its own (git/ensure-gcm.sh is
+# the native-Linux fallback for exactly that gap, and explicitly defers to
+# this bridge when it already ran -- see its own header comment). Must run
+# after gitconfig_credential_migration.yml in the same order
+# wsl/bootstrap.ps1 called the two scripts, since a prior migration may have
+# just populated ~/.gitconfig.local's [credential] block, which this task
+# must see and skip in favour of (see "content-gated" below).
+#
+# The original script took the GCM path via a file's *content*, not a plain
+# argument, purely to dodge wsl.exe's own argument re-parsing when Windows
+# called INTO WSL (see wsl/bridge-gcm.sh's header). That boundary doesn't
+# exist here -- this role runs natively inside WSL, so the resolved path is
+# just an Ansible variable, no indirection needed.
+#
+# Also does NOT reproduce the original's "!<path>" vs bare-name distinction
+# as a comment-only concern: confirmed live in a scratch play
+# (ansible-playbook --check --diff against a throwaway gitconfig.local) that
+# community.general.git_config round-trips a "!<path>" value with no
+# corruption, the same failure mode the original script's comment warns
+# about for raw `git config --file`.
+
+- name: Set GCM bridge path facts
+  ansible.builtin.set_fact:
+    wsl_gitconfig_local_path: "{{ ansible_facts['env']['HOME'] }}/.gitconfig.local"
+    wsl_gcm_wrapper_path: "{{ wsl_gcm_bin_dir }}/{{ wsl_gcm_wrapper_name }}"
+
+- name: Read ~/.gitconfig.local's settings (empty/absent file reads as no settings, not an error)
+  community.general.git_config_info:
+    scope: file
+    path: "{{ wsl_gitconfig_local_path }}"
+  register: _wsl_gcm_local_info
+
+- name: Decide whether ~/.gitconfig.local already has a bare [credential] block
+  ansible.builtin.set_fact:
+    wsl_gcm_local_has_credential: >-
+      {{
+        (_wsl_gcm_local_info.config_values
+         | dict2items
+         | selectattr('key', 'match', '^credential\.[^.]+$')
+         | list
+         | length) > 0
+      }}
+
+- name: Report when the bridge is skipped (already has a [credential] block)
+  ansible.builtin.debug:
+    msg: "~/.gitconfig.local already has a [credential] block - skipping the GCM bridge."
+  when: wsl_gcm_local_has_credential
+
+- name: Bridge to the Windows-side Git Credential Manager
+  when: not wsl_gcm_local_has_credential
+  block:
+    - name: Discover git.exe on PATH (WSL interop) when no explicit GCM path is set
+      ansible.builtin.command: sh -c 'command -v git.exe'
+      register: _wsl_git_exe
+      changed_when: false
+      failed_when: false
+      check_mode: false # read-only PATH probe; safe to run during --check
+      when: wsl_windows_gcm_path | length == 0
+
+    - name: Derive git-credential-manager.exe's path from git.exe's location
+      # wsl/bootstrap.ps1's own derivation: two directories up from
+      # <git-root>/cmd/git.exe, then mingw64/bin/git-credential-manager.exe
+      # (confirmed against a real Git for Windows install: git.exe on PATH
+      # resolves to a plain /mnt/c/... path already -- WSL interop maps the
+      # Windows PATH entry straight onto its drvfs mount, no wslpath
+      # conversion needed for this specific lookup).
+      ansible.builtin.set_fact:
+        wsl_windows_gcm_path_resolved: >-
+          {{
+            (_wsl_git_exe.stdout | trim | regex_replace('/[^/]+$', '') | regex_replace('/[^/]+$', ''))
+            + '/mingw64/bin/git-credential-manager.exe'
+          }}
+      when:
+        - wsl_windows_gcm_path | length == 0
+        - _wsl_git_exe.rc | default(1) == 0
+
+    - name: Resolve the GCM path (explicit override wins over discovery)
+      ansible.builtin.set_fact:
+        wsl_windows_gcm_path_resolved: "{{ wsl_windows_gcm_path }}"
+      when: wsl_windows_gcm_path | length > 0
+
+    - name: Report when no Windows-side git.exe was found on PATH
+      ansible.builtin.debug:
+        msg: >-
+          No Windows-side git.exe found on PATH (WSL interop) and
+          wsl_windows_gcm_path was not set - skipping the GCM bridge.
+      when: >-
+        wsl_windows_gcm_path | length == 0
+        and _wsl_git_exe.rc | default(1) != 0
+
+    - name: Wire up the GCM bridge, if the resolved path exists
+      when: wsl_windows_gcm_path_resolved | default('') | length > 0
+      block:
+        - name: Stat the resolved git-credential-manager.exe
+          ansible.builtin.stat:
+            path: "{{ wsl_windows_gcm_path_resolved }}"
+          register: _wsl_gcm_exe_stat
+
+        - name: Report when git-credential-manager.exe is not present at the resolved path
+          ansible.builtin.debug:
+            msg: >-
+              Windows git-credential-manager.exe not found at
+              {{ wsl_windows_gcm_path_resolved }} - skipping the GCM bridge.
+          when: not _wsl_gcm_exe_stat.stat.exists
+
+        - name: Bridge credentials, now that a real git-credential-manager.exe was found
+          when: _wsl_gcm_exe_stat.stat.exists
+          block:
+            - name: Ensure ~/.local/bin exists
+              ansible.builtin.file:
+                path: "{{ wsl_gcm_bin_dir }}"
+                state: directory
+                mode: "0755"
+
+            - name: Install the no-spaces wrapper script (git-config can't safely store a "Program Files" path as a value)
+              ansible.builtin.copy:
+                dest: "{{ wsl_gcm_wrapper_path }}"
+                mode: "0755"
+                content: |
+                  #!/usr/bin/env bash
+                  exec "{{ wsl_windows_gcm_path_resolved }}" "$@"
+
+            - name: Point credential.helper at the wrapper (exec form, not a bare name)
+              # "!<cmd>" runs the literal command via sh -c; a bare name makes
+              # git look for git-credential-<name> instead (confirmed live by
+              # bridge-gcm.sh's own header comment) - ported verbatim.
+              community.general.git_config:
+                name: credential.helper
+                scope: file
+                file: "{{ wsl_gitconfig_local_path }}"
+                value: "!{{ wsl_gcm_wrapper_path }}"
+
+            - name: Check whether ~/.gitconfig.local now actually exists (the git_config write above is simulated under --check)
+              ansible.builtin.stat:
+                path: "{{ wsl_gitconfig_local_path }}"
+              register: _wsl_gcm_local_stat_post
+
+            - name: Ensure ~/.gitconfig.local is 0600 (it now holds a credential.helper)
+              # Skipped under --check on a brand-new file -- see the matching
+              # guard/comment in gitconfig_credential_migration.yml.
+              ansible.builtin.file:
+                path: "{{ wsl_gitconfig_local_path }}"
+                mode: "0600"
+              when: _wsl_gcm_local_stat_post.stat.exists or not ansible_check_mode
+
+- name: Record whether the GCM bridge is configured (this run or a previous one)
+  # Consumed by tasks/distro.yml's systemd warning: enabling [boot] systemd
+  # can unregister WSL interop, which would break this bridge's exec of a
+  # Windows binary. "Configured" covers both a previous run (a bare
+  # [credential] block already present in ~/.gitconfig.local, pointing at
+  # this role's own wrapper script -- wsl_gcm_local_has_credential is true
+  # for ANY bare [credential] block, including one from
+  # gitconfig_credential_migration.yml, hence the extra check that the
+  # value actually names the wrapper) and this run (a real
+  # git-credential-manager.exe was found and stat'd above). Runs
+  # unconditionally (outside every when-gated block above) so it always
+  # resolves to a real true/false rather than leaving the fact undefined
+  # when a branch was skipped.
+  ansible.builtin.set_fact:
+    wsl_gcm_bridge_configured: >-
+      {{
+        (wsl_gcm_local_has_credential
+         and ((_wsl_gcm_local_info.config_values['credential.helper'] | default([]) | join(' '))
+              is search(wsl_gcm_wrapper_name)))
+        or ((_wsl_gcm_exe_stat is defined) and (_wsl_gcm_exe_stat.stat.exists | default(false)))
+      }}

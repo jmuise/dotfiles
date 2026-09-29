@@ -1,0 +1,39 @@
+---
+# ── Screenshots ───────────────────────────────────────────────────────────────
+# macos/defaults.sh lines:
+#   defaults write com.apple.screencapture location -string "$HOME/Desktop"
+#   defaults write com.apple.screencapture type     -string "png"
+#   defaults write com.apple.screencapture disable-shadow -bool true
+#
+# The screenshot flash/shadow chrome is drawn by SystemUIServer, so these
+# notify "Restart SystemUIServer" (the third app the original script's
+# unconditional killall loop restarts).
+#
+# `$HOME` is expanded here exactly as the original shell script expanded it
+# (at the time the value is written) via Ansible's own `lookup('env', 'HOME')`
+# -- there is no shell interpolation in `value:` for osx_defaults, so this
+# cannot be inlined as a literal "$HOME/Desktop" string.
+
+- name: Set the default screenshot save location
+  community.general.osx_defaults:
+    domain: com.apple.screencapture
+    key: location
+    type: string
+    value: "{{ lookup('env', 'HOME') }}/Desktop"
+  notify: Restart SystemUIServer
+
+- name: Set the default screenshot file format
+  community.general.osx_defaults:
+    domain: com.apple.screencapture
+    key: type
+    type: string
+    value: png
+  notify: Restart SystemUIServer
+
+- name: Disable the drop shadow around window screenshots
+  community.general.osx_defaults:
+    domain: com.apple.screencapture
+    key: disable-shadow
+    type: bool
+    value: true
+  notify: Restart SystemUIServer

@@ -1,0 +1,79 @@
+---
+# ── Finder ────────────────────────────────────────────────────────────────────
+# macos/defaults.sh lines:
+#   defaults write com.apple.finder ShowPathbar        -bool true
+#   defaults write com.apple.finder ShowStatusBar      -bool true
+#   defaults write com.apple.finder AppleShowAllFiles  -bool true
+#   defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
+#   defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
+#   defaults write NSGlobalDomain  AppleShowAllExtensions -bool true
+#   defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true
+#   defaults write com.apple.desktopservices DSDontWriteUSBStores     -bool true
+#
+# All Finder-domain reads are cached by a running Finder process, and the two
+# desktopservices keys govern Finder's own .DS_Store behaviour, so every task
+# here notifies "Restart Finder" (see handlers/main.yml).
+
+- name: Show the path bar in Finder windows
+  community.general.osx_defaults:
+    domain: com.apple.finder
+    key: ShowPathbar
+    type: bool
+    value: true
+  notify: Restart Finder
+
+- name: Show the status bar in Finder windows
+  community.general.osx_defaults:
+    domain: com.apple.finder
+    key: ShowStatusBar
+    type: bool
+    value: true
+  notify: Restart Finder
+
+- name: Show hidden files in Finder
+  community.general.osx_defaults:
+    domain: com.apple.finder
+    key: AppleShowAllFiles
+    type: bool
+    value: true
+  notify: Restart Finder
+
+- name: Default Finder windows to list view
+  community.general.osx_defaults:
+    domain: com.apple.finder
+    key: FXPreferredViewStyle
+    type: string
+    value: Nlsv
+  notify: Restart Finder
+
+- name: Default Finder search scope to the current folder
+  community.general.osx_defaults:
+    domain: com.apple.finder
+    key: FXDefaultSearchScope
+    type: string
+    value: SCcf
+  notify: Restart Finder
+
+- name: Always show all filename extensions
+  community.general.osx_defaults:
+    domain: NSGlobalDomain
+    key: AppleShowAllExtensions
+    type: bool
+    value: true
+  notify: Restart Finder
+
+- name: Disable .DS_Store on network shares
+  community.general.osx_defaults:
+    domain: com.apple.desktopservices
+    key: DSDontWriteNetworkStores
+    type: bool
+    value: true
+  notify: Restart Finder
+
+- name: Disable .DS_Store on USB volumes
+  community.general.osx_defaults:
+    domain: com.apple.desktopservices
+    key: DSDontWriteUSBStores
+    type: bool
+    value: true
+  notify: Restart Finder

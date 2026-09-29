@@ -28,7 +28,8 @@ provision/
 │   └── group_vars/all.yml   # doc stub — the profile model lives in profile/
 ├── site.yml                 # entry point; reads profile/, -e profile=<tier> overrides
 └── roles/
-    └── packages/            # the spiked role
+    ├── packages/            # the spiked role
+    └── wsl/                 # WSL-distro-side machine state (issue #43)
 ```
 
 ## Running it
@@ -133,9 +134,16 @@ Per the standing "contribute the gap, don't shim it" preference:
   back to `ansible.windows.win_command` for exactly this reason. A
   first-class `community.windows.win_winget` would remove that fallback.
 
+## Roles
+
+| Role | Tag | What | Docs |
+| --- | --- | --- | --- |
+| `packages` | `packages` | OS packages + profile-gated AI CLIs | `roles/packages/README.md` |
+| `wsl` | `wsl` | WSL-distro-side machine state: gitconfig credential migration, the Windows Credential Manager bridge, `/etc/wsl.conf` | `roles/wsl/README.md` |
+
 ## Not done here (by design)
 
-- Any role other than `packages`.
+- `secrets` / `scheduled` roles — issues #44 / #45.
 - `bootstrap/` and `dotfiles/` layers.
 - Porting the rest of `install.py` / `legacy/provision_legacy.py`.
 - Wiring `provision/` to run against/inside a devcontainer target — see
