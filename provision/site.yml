@@ -116,6 +116,8 @@
   roles:
     - role: packages
       tags: [packages]
+    - role: wsl
+      tags: [wsl]
     - role: secrets
       tags: [secrets]
     # macOS system defaults (Finder/Dock/keyboard/trackpad/screenshots/

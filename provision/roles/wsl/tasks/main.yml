@@ -1,0 +1,73 @@
+---
+# WSL detection -- everything else in this role hangs off wsl_is_wsl.
+#
+# Signal chosen: 'microsoft' in ansible_facts['kernel'] | lower.
+#
+# Why this one: ansible_facts['kernel'] is `uname -r`, already gathered by
+# gather_facts in site.yml -- no extra command, no extra file read, works
+# identically in --check mode (it's a fact, not an action). Both WSL
+# generations stamp their kernel release with it: WSL2 ships a purpose-built
+# kernel literally named *-microsoft-standard-WSL2 (confirmed on the
+# reference host: "6.6.114.1-microsoft-standard-WSL2"), and WSL1 (which has
+# no separate Linux kernel at all -- syscalls are translated by the Windows
+# NT kernel) reports its own build string with a trailing "-Microsoft". The
+# `| lower` makes the match case-insensitive across both spellings.
+#
+# /proc/sys/fs/binfmt_misc/WSLInterop existing was the other candidate the
+# issue named, and it's checked separately below (wsl_interop_available) --
+# but only as a second-order fact used to decide whether the GCM bridge can
+# do anything (it execs a Windows binary indirectly, which needs interop
+# actually enabled), not for the top-level gate. WSL interop can be turned
+# off independently of the distro still being WSL (wsl.conf's
+# [interop] enabled=false), so its absence means "this WSL box currently
+# can't exec Windows binaries", not "this isn't WSL" -- conflating the two
+# would make the whole role (including the parts that touch neither /mnt/c
+# nor a Windows exe, e.g. distro.yml) skip on a box that legitimately needs
+# them.
+#
+# wsl_detect_override (defaults/main.yml) lets a test harness force either
+# outcome without a real WSL kernel to hand -- see README "Testing off-WSL".
+- name: Detect whether this host is WSL
+  ansible.builtin.set_fact:
+    wsl_is_wsl: >-
+      {{
+        wsl_detect_override
+        if wsl_detect_override is not none
+        else ('microsoft' in ansible_facts['kernel'] | lower)
+      }}
+  tags: [always]
+
+- name: Report the WSL gate
+  ansible.builtin.debug:
+    msg: >-
+      wsl_is_wsl = {{ wsl_is_wsl }}
+      (kernel = {{ ansible_facts['kernel'] }}{{ ', overridden' if wsl_detect_override is not none else '' }})
+  tags: [always]
+
+- name: Run WSL-side machine state
+  when: wsl_is_wsl | bool
+  tags: [wsl]
+  block:
+    - name: Check whether WSL interop (Windows binfmt_misc registration) is available
+      ansible.builtin.stat:
+        path: /proc/sys/fs/binfmt_misc/WSLInterop
+      register: _wsl_interop_stat
+      # Read-only probe of a virtual /proc file; safe under --check.
+
+    - name: Record WSL interop availability
+      ansible.builtin.set_fact:
+        wsl_interop_available: "{{ _wsl_interop_stat.stat.exists }}"
+
+    - name: Install WSL-specific apt packages (if any are configured)
+      ansible.builtin.import_tasks: apt.yml
+      when: wsl_extra_apt_packages | length > 0
+
+    - name: Migrate an existing ~/.gitconfig [credential] block into ~/.gitconfig.local
+      ansible.builtin.import_tasks: gitconfig_credential_migration.yml
+
+    - name: Bridge WSL git credentials to the Windows Credential Manager
+      ansible.builtin.import_tasks: gcm_bridge.yml
+
+    - name: Distro setup (/etc/wsl.conf)
+      ansible.builtin.import_tasks: distro.yml
+      when: wsl_manage_etc_wsl_conf | bool
