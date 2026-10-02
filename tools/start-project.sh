@@ -93,6 +93,10 @@ fi
 # "Dev container not found" even though `up` (which matches compose labels)
 # found it. --container-id is passed together with --workspace-folder so the
 # CLI still reads devcontainer.json for remoteUser/remoteEnv and the cwd.
+# Scope: this cures compose-based devcontainers only. For image-based ones
+# `up` itself finds the container by the local_folder label, so a VS Code
+# created (UNC-labelled) container is not found and `up` would create a
+# second one; the id fix does not help there.
 # `up` prints its JSON result on stdout (logs go to stderr); if anything else
 # ever precedes it, fall back to the last line.
 container_id="$(jq -r '.containerId // empty' <<<"$result" 2>/dev/null || true)"
@@ -102,6 +106,10 @@ fi
 if [[ -z "$container_id" ]]; then
   echo "sp: devcontainer up reported success but no containerId could be parsed from its output:" >&2
   echo "$result" >&2
+  exit 1
+fi
+if ! [[ $container_id =~ ^[0-9a-fA-F]{12,64}$ ]]; then
+  echo "sp: devcontainer up reported an unexpected containerId (not a 12-64 char hex id): $container_id" >&2
   exit 1
 fi
 
@@ -154,7 +162,7 @@ if $use_code; then
   # UTF-8 string). Use the label the container actually carries instead of
   # assuming it is $dir: a VS Code (Remote-WSL) created container has a UNC
   # label (\\wsl.localhost\<distro>\...), an sp-created one has the Linux path.
-  host_path="$(docker inspect --format '{{ index .Config.Labels "devcontainer.local_folder" }}' "$container_id" 2>/dev/null || true)"
+  host_path="$(docker inspect --format '{{ index .Config.Labels "devcontainer.local_folder" }}' -- "$container_id" 2>/dev/null || true)"
   host_path="${host_path:-$dir}"
   hex="$(printf '%s' "$host_path" | od -An -tx1 | tr -d ' \n')"
   exec code --folder-uri "vscode-remote://dev-container+${hex}${target}"
