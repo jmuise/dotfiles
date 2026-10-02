@@ -85,6 +85,34 @@ if [[ $status -ne 0 || "$outcome" != "success" ]]; then
   exit 1
 fi
 
+# Resolve the container by the id `up` reported rather than letting `exec`
+# re-derive it from --workspace-folder. `exec` looks the container up by the
+# label devcontainer.local_folder=<this Linux path>, but a container created
+# by VS Code (Remote-WSL "Reopen in Container") carries a UNC label such as
+# \\wsl.localhost\Debian\home\... instead, so a path lookup fails with
+# "Dev container not found" even though `up` (which matches compose labels)
+# found it. --container-id is passed together with --workspace-folder so the
+# CLI still reads devcontainer.json for remoteUser/remoteEnv and the cwd.
+# Scope: this cures compose-based devcontainers only. For image-based ones
+# `up` itself finds the container by the local_folder label, so a VS Code
+# created (UNC-labelled) container is not found and `up` would create a
+# second one; the id fix does not help there.
+# `up` prints its JSON result on stdout (logs go to stderr); if anything else
+# ever precedes it, fall back to the last line.
+container_id="$(jq -r '.containerId // empty' <<<"$result" 2>/dev/null || true)"
+if [[ -z "$container_id" ]]; then
+  container_id="$(tail -n1 <<<"$result" | jq -r '.containerId // empty' 2>/dev/null || true)"
+fi
+if [[ -z "$container_id" ]]; then
+  echo "sp: devcontainer up reported success but no containerId could be parsed from its output:" >&2
+  echo "$result" >&2
+  exit 1
+fi
+if ! [[ $container_id =~ ^[0-9a-fA-F]{12,64}$ ]]; then
+  echo "sp: devcontainer up reported an unexpected containerId (not a 12-64 char hex id): $container_id" >&2
+  exit 1
+fi
+
 # VS Code's own Dev Containers extension clones dotfiles.repository into the
 # container and runs dotfiles.installCommand on attach; the devcontainer CLI
 # has no equivalent, so replicate it here from the same settings this repo
@@ -112,7 +140,7 @@ setup_dotfiles() {
   # are passed as argv (not interpolated into the remote script's text) so a
   # stray quote/`$(...)`/`;` in any of them can't inject into the remote
   # shell — no string-building, no eval.
-  devcontainer exec --workspace-folder "$dir" bash -c '
+  devcontainer exec --container-id "$container_id" --workspace-folder "$dir" bash -c '
     set -e
     target="${1/#\~/$HOME}"
     [[ -d "$target/.git" ]] || git clone -- "$2" "$target"
@@ -129,8 +157,15 @@ if $use_code; then
   fi
   remote_workspace="$(jq -r '.remoteWorkspaceFolder // empty' <<<"$result")"
   target="${remote_workspace:-/workspaces/$(basename "$dir")}"
-  hex="$(printf '%s' "$dir" | od -An -tx1 | tr -d ' \n')"
+  # The Dev Containers extension finds the container to attach to by the label
+  # devcontainer.local_folder == the hostPath encoded in this URI (hex of the
+  # UTF-8 string). Use the label the container actually carries instead of
+  # assuming it is $dir: a VS Code (Remote-WSL) created container has a UNC
+  # label (\\wsl.localhost\<distro>\...), an sp-created one has the Linux path.
+  host_path="$(docker inspect --format '{{ index .Config.Labels "devcontainer.local_folder" }}' -- "$container_id" 2>/dev/null || true)"
+  host_path="${host_path:-$dir}"
+  hex="$(printf '%s' "$host_path" | od -An -tx1 | tr -d ' \n')"
   exec code --folder-uri "vscode-remote://dev-container+${hex}${target}"
 fi
 
-exec devcontainer exec --workspace-folder "$dir" "${remote_env_args[@]}" bash
+exec devcontainer exec --container-id "$container_id" --workspace-folder "$dir" "${remote_env_args[@]}" bash
