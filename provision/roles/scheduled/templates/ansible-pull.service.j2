@@ -1,0 +1,34 @@
+# Managed by provision/roles/scheduled (Ansible). Do not edit by hand --
+# re-running the role overwrites this file. Edit
+# provision/roles/scheduled/templates/ansible-pull.service.j2 and the
+# scheduled_ansible_pull_* variables in defaults/main.yml instead.
+#
+# Triggered by {{ _scheduled_pull_timer_name }}; not enabled on its own.
+[Unit]
+Description=dotfiles ansible-pull ({{ scheduled_ansible_pull_repo }}@{{ scheduled_ansible_pull_ref }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ _scheduled_pull_command }}
+StandardOutput=append:{{ scheduled_ansible_pull_log }}
+StandardError=append:{{ scheduled_ansible_pull_log }}
+
+# Hardening -- deliberately partial. NoNewPrivileges=yes and
+# ProtectHome=read-only/yes are NOT set: the pulled playbook
+# (provision/site.yml) can run apt tasks that escalate via `become: true`
+# (packages_apt_become, see provision/roles/packages/tasks/apt.yml), which
+# needs sudo's setuid escalation -- exactly what NoNewPrivileges=yes exists
+# to block -- and both ansible-pull's own checkout/log paths and whatever
+# the pulled dotfiles-linking layer(s) do write directly under $HOME, which
+# ProtectHome would block. Everything below is compatible with both of
+# those requirements.
+LockPersonality=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes

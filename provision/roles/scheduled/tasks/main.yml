@@ -1,0 +1,14 @@
+---
+# Dispatch on OS family, exactly like roles/packages/tasks/main.yml. Neither
+# branch below re-implements anything the referenced scripts / site.yml
+# already do -- this role only decides WHEN they run.
+
+- name: "Windows: weekly winget check + on-demand lock/apply (Task Scheduler)"
+  ansible.builtin.import_tasks: windows.yml
+  when: ansible_facts['os_family'] == 'Windows'
+  tags: [scheduled, scheduled_windows]
+
+- name: "WSL/Linux: optional ansible-pull timer (off by default)"
+  ansible.builtin.import_tasks: ansible_pull.yml
+  when: ansible_facts['system'] == 'Linux'
+  tags: [scheduled, scheduled_ansible_pull]
