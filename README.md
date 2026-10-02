@@ -107,6 +107,8 @@ These are already set in `vscode/settings.json`. The install script detects the 
 
 Git identity comes along for free too: VS Code's Dev Containers "copy git config" feature copies your host `~/.gitconfig` into every container automatically, and since it's a single rendered file (see [Machine-specific config](#machine-specific-config)) rather than one that `include`s another, there's nothing project-specific to configure — no per-project bind mount needed. (Copy-git-config does *not* follow `include.path` — [microsoft/vscode-remote-release#9469](https://github.com/microsoft/vscode-remote-release/issues/9469) — which is what a split file would require.)
 
+In a devcontainer the installer also runs `tools/ensure-jq.sh`, which puts a pinned, SHA256-verified static `jq` into `~/.local/bin` (no sudo) when none is on `PATH` — the fail-closed Claude hooks in `claude/hooks/` parse their input with jq, so without it every Bash/Edit/Write call in the container is blocked (with a `jq not found` message naming this remedy). Bump `JQ_VERSION` and the two checksums in that script by hand.
+
 `install.sh` also runs `git/ensure-gcm.sh` inside the container if no
 `credential.helper` is already active — a backstop alongside VS Code's own
 git-credential forwarding, since the latter is only confirmed to work for

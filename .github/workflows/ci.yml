@@ -66,6 +66,9 @@ jobs:
       - name: python3 tests/test_hookspath_repo_guard.py (issue #70 core.hooksPath repo guard)
         run: python3 tests/test_hookspath_repo_guard.py -v
 
+      - name: python3 tests/test_ensure_jq.py (issue #88 jq guard message + ensure-jq.sh)
+        run: python3 tests/test_ensure_jq.py -v
+
       - name: bash -n on every tracked shell script
         run: |
           set -uo pipefail
@@ -146,6 +149,7 @@ jobs:
             hooks/_dispatch.sh \
             tools/smart-editor.sh \
             tools/start-project.sh \
+            tools/ensure-jq.sh \
             claude/hooks/block-ai-attribution.sh \
             claude/hooks/block-pr-merge.sh \
             claude/hooks/require-devcontainer.sh

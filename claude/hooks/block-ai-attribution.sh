@@ -36,6 +36,17 @@ set -Eeuo pipefail
 # code is 2 either way, so the duplication is left alone.
 trap 'echo "BLOCKED by claude/hooks/block-ai-attribution.sh: the guard itself failed unexpectedly near line $LINENO, so this call is refused rather than silently allowed. This is a bug in the hook, not in your command -- report it to the Captain." >&2; exit 2' ERR
 
+# jq is required to parse the hook payload. Hooks inherit the agent's PATH, which
+# in a devcontainer may not include ~/.local/bin (shell/exports.sh only runs for
+# shells), where tools/ensure-jq.sh installs it -- so append it as a last-resort
+# fallback (appended, never prepended: it must not shadow system binaries). Stay
+# fail-CLOSED: a missing jq is a block with an actionable message, never an allow.
+[ -n "${HOME:-}" ] && PATH="$PATH:$HOME/.local/bin"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "BLOCKED by claude/hooks/block-ai-attribution.sh: jq not found on PATH, so this guard cannot read the tool call and refuses it rather than silently allowing it. Install jq: re-run the dotfiles installer (install.sh) or run tools/ensure-jq.sh from the dotfiles checkout (installs a checksum-verified jq into ~/.local/bin, no sudo), or install jq with the system package manager." >&2
+  exit 2
+fi
+
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
 

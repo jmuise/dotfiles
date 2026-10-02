@@ -13,6 +13,8 @@
 #   2           Deny rule matched → pass through (Claude Code native deny handles it)
 #   3 + stdout  Ask rule matched → rewrite but let Claude Code prompt the user
 
+# ~/.local/bin is where tools/ensure-jq.sh installs jq; hooks may not inherit it.
+[ -n "${HOME:-}" ] && PATH="$PATH:$HOME/.local/bin"
 if ! command -v jq &>/dev/null; then
   echo "[rtk] WARNING: jq is not installed. Hook cannot rewrite commands. Install jq: https://jqlang.github.io/jq/download/" >&2
   exit 0
