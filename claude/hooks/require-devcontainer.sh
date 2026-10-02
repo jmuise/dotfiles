@@ -71,6 +71,15 @@ trap 'echo "BLOCKED by claude/hooks/require-devcontainer.sh: the guard itself fa
 # opaque bytes rather than possibly refusing invalid UTF-8.
 export LC_ALL=C
 
+# Shared jq bootstrap: ~/.local/bin PATH fallback + fail-closed require_jq.
+# A failed `source` exits 1 without firing the ERR trap, so block explicitly.
+# shellcheck source=_lib/jq.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_lib/jq.sh" || {
+  echo "BLOCKED by claude/hooks/require-devcontainer.sh: its shared helper claude/hooks/_lib/jq.sh could not be loaded, so this call is refused rather than silently allowed. Re-run the dotfiles installer (install.sh)." >&2
+  exit 2
+}
+require_jq require-devcontainer.sh
+
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
 agent_type=$(printf '%s' "$input" | jq -r '.agent_type // "main"')

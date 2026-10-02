@@ -13,6 +13,9 @@
 #   2           Deny rule matched → pass through (Claude Code native deny handles it)
 #   3 + stdout  Ask rule matched → rewrite but let Claude Code prompt the user
 
+# Shared ~/.local/bin PATH fallback; jq stays optional here (fail-open by design).
+# shellcheck source=_lib/jq.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_lib/jq.sh"
 if ! command -v jq &>/dev/null; then
   echo "[rtk] WARNING: jq is not installed. Hook cannot rewrite commands. Install jq: https://jqlang.github.io/jq/download/" >&2
   exit 0
