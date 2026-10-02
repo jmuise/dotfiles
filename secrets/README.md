@@ -149,7 +149,10 @@ inside an `sp`-started container. `sp` works around this itself: if
 `CLAUDE_CODE_OAUTH_TOKEN`/`GH_TOKEN` (falling back to `gh auth token`) are
 already present in the host shell that ran `sp`, it forwards them straight
 into the container via `devcontainer ... --remote-env`, bypassing the GCM
-proxy entirely for this path. `sp -c` (VS Code attach) doesn't get this - it
+proxy entirely for this path. `sp` also addresses the container by the
+`containerId` that `devcontainer up` reports (`exec --container-id ... --workspace-folder ...`)
+rather than by a path lookup, so it works on a container VS Code (Remote-WSL)
+started, whose `devcontainer.local_folder` label is a UNC path. `sp -c` (VS Code attach) doesn't get this - it
 opens VS Code's own terminal instead of `sp`'s `exec`, so it's still on the
 VS Code forwarding path below.
 
