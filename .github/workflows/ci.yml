@@ -150,6 +150,7 @@ jobs:
             tools/smart-editor.sh \
             tools/start-project.sh \
             tools/ensure-jq.sh \
+            claude/hooks/_lib/jq.sh \
             claude/hooks/block-ai-attribution.sh \
             claude/hooks/block-pr-merge.sh \
             claude/hooks/require-devcontainer.sh

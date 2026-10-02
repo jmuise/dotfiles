@@ -71,16 +71,14 @@ trap 'echo "BLOCKED by claude/hooks/require-devcontainer.sh: the guard itself fa
 # opaque bytes rather than possibly refusing invalid UTF-8.
 export LC_ALL=C
 
-# jq is required to parse the hook payload. Hooks inherit the agent's PATH, which
-# in a devcontainer may not include ~/.local/bin (shell/exports.sh only runs for
-# shells), where tools/ensure-jq.sh installs it -- so append it as a last-resort
-# fallback (appended, never prepended: it must not shadow system binaries). Stay
-# fail-CLOSED: a missing jq is a block with an actionable message, never an allow.
-[ -n "${HOME:-}" ] && PATH="$PATH:$HOME/.local/bin"
-if ! command -v jq >/dev/null 2>&1; then
-  echo "BLOCKED by claude/hooks/require-devcontainer.sh: jq not found on PATH, so this guard cannot read the tool call and refuses it rather than silently allowing it. Install jq: re-run the dotfiles installer (install.sh) or run tools/ensure-jq.sh from the dotfiles checkout (installs a checksum-verified jq into ~/.local/bin, no sudo), or install jq with the system package manager." >&2
+# Shared jq bootstrap: ~/.local/bin PATH fallback + fail-closed require_jq.
+# A failed `source` exits 1 without firing the ERR trap, so block explicitly.
+# shellcheck source=_lib/jq.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_lib/jq.sh" || {
+  echo "BLOCKED by claude/hooks/require-devcontainer.sh: its shared helper claude/hooks/_lib/jq.sh could not be loaded, so this call is refused rather than silently allowed. Re-run the dotfiles installer (install.sh)." >&2
   exit 2
-fi
+}
+require_jq require-devcontainer.sh
 
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
