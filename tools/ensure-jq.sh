@@ -67,7 +67,7 @@ TMP_FILE="$(mktemp "$BIN_DIR/.jq.XXXXXX")"
 trap 'rm -f "$TMP_FILE"' EXIT
 
 echo "Downloading jq ${JQ_VERSION} (${ARCH})..."
-if ! curl -fsSL "$URL" -o "$TMP_FILE"; then
+if ! curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 120 -fsSL "$URL" -o "$TMP_FILE"; then
   echo "Download of $URL failed - jq not installed." >&2
   exit 1
 fi
