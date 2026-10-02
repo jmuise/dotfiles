@@ -289,6 +289,26 @@ if is_linux and not is_windows:
     else:
         subprocess.run(["bash", str(DOTFILES / "git" / "ensure-gcm.sh")], check=True)
 
+# jq: the Claude PreToolUse guards (claude/hooks/*.sh) parse their input with
+# jq and are fail-closed, so a container without it blocks every Bash/Edit/Write
+# call. Host package lists don't reach devcontainers (no sudo here), so ensure a
+# pinned, checksum-verified binary in ~/.local/bin. Failure policy mirrors
+# git/ensure-gcm.sh: ordinary failures (no curl, network, unsupported arch; exit
+# 1) warn and continue, since the hooks' own "jq not found" message names the
+# same remedy; a checksum mismatch (exit 3) is a tamper signal and aborts.
+JQ_EXIT_CHECKSUM_MISMATCH = 3
+if is_devcontainer() and is_linux:
+    if DRY_RUN:
+        print("  would check/install jq (tools/ensure-jq.sh)")
+    else:
+        _jq_rc = subprocess.run(["bash", str(DOTFILES / "tools" / "ensure-jq.sh")]).returncode
+        if _jq_rc == JQ_EXIT_CHECKSUM_MISMATCH:
+            error("jq download failed its SHA256 check (possible tampering) -- aborting install.")
+            sys.exit(1)
+        elif _jq_rc != 0:
+            warn("jq could not be installed -- the Claude hook guards will block every tool call until it is on PATH."
+                 " Re-run: bash " + str(DOTFILES / "tools" / "ensure-jq.sh"))
+
 gitconfig_local = HOME / ".gitconfig.local"
 if not gitconfig_local.exists():
     existing_gitconfig = HOME / ".gitconfig"
