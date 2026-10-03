@@ -1,0 +1,112 @@
+---
+# ── Windows: winget weekly check + on-demand lock/apply via Ansible ────────
+# WRITTEN BUT UNVERIFIED -- see README.md's banner and tasks/windows.yml's
+# header for why. Gated by `ansible_facts['os_family'] == 'Windows'` in
+# tasks/main.yml, exactly like roles/packages' Homebrew branch is gated on
+# Darwin -- on every host this role has actually run against (WSL/Debian)
+# these tasks are always skipped.
+
+# Repo root as seen FROM the Windows host (i.e. the directory install.ps1
+# lives beside) -- NOT a WSL path. Every real machine's checkout location can
+# differ, so there is no sane universal default. Left empty on purpose: the
+# Windows tasks additionally guard on this being non-empty (see
+# tasks/windows.yml), so an unconfigured host skips them rather than trying
+# to schedule a task pointing at "" and failing loudly the first time this
+# role is ever pointed at a real Windows target.
+scheduled_windows_dotfiles_dir: ""
+
+scheduled_windows_winget_check_task_name: "dotfiles-scheduled-winget-check"
+scheduled_windows_winget_check_description: >-
+  Weekly winget update check (managed by provision/roles/scheduled, Ansible).
+  Runs packages/winget-check-updates.ps1, which proposes updates onto the
+  winget-updates branch and never touches the working tree or the currently
+  checked-out branch. WRITTEN BUT UNVERIFIED -- see
+  provision/roles/scheduled/README.md.
+
+# community.windows.win_scheduled_task's `weekly` trigger requires a
+# start_boundary (date component included) even though only the time-of-day
+# and day-of-week actually matter for a recurring trigger -- any date works,
+# including one in the past. Monday 09:00 local time on the box: after the
+# Sunday-night quiet period, before a Monday is well underway. Not
+# load-bearing, override freely.
+scheduled_windows_winget_check_start_boundary: "2024-01-01T09:00:00"
+scheduled_windows_winget_check_days_of_week: "monday"
+# ansible_facts['env']['USERNAME'] is a real fact key ONLY once Ansible has actually
+# gathered facts from a Windows host, which has never happened against this
+# inventory. Harmless to reference: it resolves to `omit` (the module's own
+# "run in the context of whoever registered the task" default) until this
+# role is pointed at a real Windows target with facts gathered.
+scheduled_windows_winget_check_username: "{{ ansible_facts['env']['USERNAME'] | default(omit) }}"
+
+# ── WSL/Linux: optional ansible-pull timer ──────────────────────────────────
+# OFF by default. Enabling this means a systemd user timer (or cron, on a box
+# without a reachable user systemd instance) periodically re-clones
+# `scheduled_ansible_pull_repo` at `scheduled_ansible_pull_ref` into
+# `scheduled_ansible_pull_dest` and runs `scheduled_ansible_pull_playbook`
+# against it, unattended, with no human in the loop. Read README.md's
+# "Security / trust model" section (relates to #58) before turning this on:
+# an ansible-pull timer auto-executes whatever lands on the pinned ref.
+scheduled_ansible_pull_enabled: false
+
+scheduled_ansible_pull_repo: "https://github.com/jmuise/dotfiles.git"
+# Pinned deliberately -- not "HEAD" or a moving branch name used without
+# thought. `main` is the only branch anyone should be pulling in the normal
+# case, but spelling it out here (rather than defaulting to "whatever the
+# remote's default branch happens to be today") keeps the choice visible and
+# something a reviewer/operator can consciously override to a tag or commit
+# SHA for a stronger guarantee. Never point this at anything that would make
+# the pull carry a credential (see the README's trust-model section).
+scheduled_ansible_pull_ref: "main"
+scheduled_ansible_pull_playbook: "provision/site.yml"
+scheduled_ansible_pull_dest: "{{ ansible_facts['env']['HOME'] }}/.local/state/dotfiles/ansible-pull"
+scheduled_ansible_pull_log: "{{ ansible_facts['env']['HOME'] }}/.local/state/dotfiles/ansible-pull.log"
+# Extra ansible-playbook-style args appended to the ansible-pull invocation,
+# e.g. ["-e", "profile=bare"] or ["--tags", "packages"]. A LIST, not a single
+# string: each element becomes one shell-quoted argv entry (see
+# tasks/ansible_pull.yml's "Build the ansible-pull command line" for why a
+# flag and its value must stay two separate, independently-quoted tokens
+# rather than one pre-joined string). Empty by default, so a pull
+# re-provisions the whole machine, same as running `ansible-playbook
+# site.yml` by hand would.
+scheduled_ansible_pull_extra_args: []
+
+# Opt-in: pass `--verify-commit` to ansible-pull, which asks git to verify
+# the GPG signature of the commit being checked out before anything from it
+# runs. OFF by default because it has two hard prerequisites this role does
+# not (and cannot) set up on its own:
+#   1. Every commit on `scheduled_ansible_pull_ref` that this timer might
+#      pull must actually be signed -- an unsigned commit makes `git
+#      verify-commit` fail, which fails the whole ansible-pull run.
+#   2. The signer's public key must already be in this machine's OWN trusted
+#      GPG keyring (git's ordinary commit-signature trust model -- this role
+#      does not distribute, pin, or manage keys). Without a trusted key
+#      present, verification fails exactly the same way as for an unsigned
+#      commit.
+# Turning this on without both in place turns every tick into a permanent
+# failure, not a security improvement -- only enable it once commit signing
+# and a trusted keyring are actually set up.
+scheduled_ansible_pull_verify_commit: false
+
+# Tags to pass to ansible-pull's `--skip-tags`, e.g. ["packages"] to skip the
+# apt-install task that requires `become: true` (see README.md's "Security /
+# trust model" section for why an unattended `become` task needs passwordless
+# sudo configured separately, and why that's a decision this role does not
+# make for you). A LIST, quoted and comma-joined into a single --skip-tags
+# argument. Empty by default, so a pull re-provisions the whole machine
+# untouched, matching the historical behaviour of this role and of running
+# `ansible-playbook site.yml` by hand.
+scheduled_ansible_pull_skip_tags: []
+
+# systemd.time(7) OnCalendar= syntax; used for the systemd-user-timer branch.
+scheduled_ansible_pull_oncalendar: "Mon *-*-* 09:00:00"
+# Fallback cron schedule (ansible.builtin.cron fields), same cadence, used
+# only when a reachable user systemd instance was NOT detected at run time.
+scheduled_ansible_pull_cron_minute: "0"
+scheduled_ansible_pull_cron_hour: "9"
+scheduled_ansible_pull_cron_weekday: "1" # cron day-of-week: 1 = Monday
+
+# Unit / cron-entry name, shared by both branches so toggling
+# scheduled_ansible_pull_enabled off cleanly tears down whichever was
+# actually installed (see tasks/ansible_pull.yml).
+scheduled_ansible_pull_unit_name: "dotfiles-ansible-pull"
+scheduled_ansible_pull_cron_name: "dotfiles ansible-pull (managed by provision/roles/scheduled)"

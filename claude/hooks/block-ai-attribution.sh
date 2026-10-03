@@ -36,6 +36,15 @@ set -Eeuo pipefail
 # code is 2 either way, so the duplication is left alone.
 trap 'echo "BLOCKED by claude/hooks/block-ai-attribution.sh: the guard itself failed unexpectedly near line $LINENO, so this call is refused rather than silently allowed. This is a bug in the hook, not in your command -- report it to the Captain." >&2; exit 2' ERR
 
+# Shared jq bootstrap: ~/.local/bin PATH fallback + fail-closed require_jq.
+# A failed `source` exits 1 without firing the ERR trap, so block explicitly.
+# shellcheck source=_lib/jq.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_lib/jq.sh" || {
+  echo "BLOCKED by claude/hooks/block-ai-attribution.sh: its shared helper claude/hooks/_lib/jq.sh could not be loaded, so this call is refused rather than silently allowed. Re-run the dotfiles installer (install.sh)." >&2
+  exit 2
+}
+require_jq block-ai-attribution.sh
+
 input=$(cat)
 tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
 
