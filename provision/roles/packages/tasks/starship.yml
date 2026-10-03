@@ -1,0 +1,50 @@
+---
+# Retires the binary-install portion of legacy/provision_legacy.py's
+# "starship" section (#41). The config symlink itself stays in
+# install.py/dotfiles linking -- out of scope for this role. Debian-family
+# only -- macOS gets starship from the Brewfile (see tasks/homebrew.yml).
+#
+# Upstream is unpinned here deliberately -- mirrors legacy behaviour exactly
+# ("move, don't improve"): the official installer always fetches whatever it
+# considers current, and this task only runs it once, when starship is
+# absent -- the same gate legacy used.
+
+- name: Check whether starship is already on PATH
+  ansible.builtin.command: sh -c 'command -v starship'
+  environment:
+    PATH: "{{ packages_search_path }}"
+  register: _packages_starship_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Skipped outright under --check (rather than relying on ansible.builtin.shell's
+# own auto-skip) for the same reason as neovim.yml/lazygit.yml/yazi.yml/
+# delta.yml: one explicit, always-correct `when: not ansible_check_mode` gate
+# per install block, plus an honest preview task, beats depending on each
+# individual module's partial/inconsistent check-mode support.
+- name: Preview the starship install (check mode)
+  ansible.builtin.debug:
+    msg: "would install starship to ~/.local/bin (curl https://starship.rs/install.sh)"
+  when:
+    - _packages_starship_present.rc != 0
+    - ansible_check_mode
+
+- name: Install starship (official installer, unpinned upstream)
+  when:
+    - _packages_starship_present.rc != 0
+    - not ansible_check_mode
+  block:
+    - name: Ensure ~/.local/bin exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.local/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Run the starship installer
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -fsSL https://starship.rs/install.sh | sh -s -- --yes -b "{{ ansible_env.HOME }}/.local/bin"
+      args:
+        executable: /bin/bash
+      changed_when: true
