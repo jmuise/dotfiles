@@ -4,19 +4,30 @@
 # profile=bare this file never runs, which is the whole point of the nesting:
 # bare ⊂ inline ⊂ agentic.
 #
-# Mirrors the two AI CLIs install.py installs on Linux:
+# Mirrors four CLIs legacy/provision_legacy.py installs on Linux/macOS:
 #   claude   -> official tarball installer (self-updating, unpinned upstream)
 #   copilot  -> npm global @github/copilot, version-pinned
+#   kilo     -> npm global @kilocode/cli, version-pinned (#41)
+#   rtk      -> project release script, pinned to an immutable commit +
+#               checksum-verified binary (#41; see defaults/main.yml)
 #
-# Kilo Code would slot in here the same way (npm global @kilocode/cli); it is
-# left out of this spike because the brief scopes AI CLIs to claude + copilot.
+# None of these run on native Windows -- powershell/profile.ps1 forwards
+# claude/copilot/kilo/rtk into the WSL distro instead (provision/roles/wsl,
+# #43, is where that WSL-side install actually happens; out of scope here).
+# Legacy did not gate these on profile at all -- gating them here (rather
+# than always installing when not-Windows, as legacy did) is a deliberate
+# behaviour change required by this role's brief ("AI CLIs stay gated on
+# profile != bare"), not an oversight. Called out in this PR's description.
 
 - name: Check whether Claude Code is already on PATH
   ansible.builtin.command: sh -c 'command -v claude'
+  environment:
+    PATH: "{{ packages_search_path }}"
   register: _packages_claude_present
   changed_when: false
   failed_when: false
-  check_mode: false # read-only probe; safe to run during --check
+  check_mode: false
+  when: ansible_facts['os_family'] != 'Windows'
 
 - name: Install Claude Code via the official installer
   ansible.builtin.shell: >-
@@ -24,10 +35,39 @@
     curl -fsSL {{ packages_claude_installer_url | quote }} | bash
   args:
     executable: /bin/bash
-  when: _packages_claude_present.rc != 0
+  when:
+    - ansible_facts['os_family'] != 'Windows'
+    - _packages_claude_present.rc != 0
   # This task only runs when `claude` is absent, so running it is itself the
   # change. (command/shell are skipped under --check regardless.)
   changed_when: true
+
+# community.general.npm hard-requires the npm executable to exist, even
+# under --check -- it errors outright rather than previewing a change if npm
+# isn't on PATH yet. On a truly fresh box that matters: apt.yml's nodejs/npm
+# install is only *simulated* under --check, so npm never actually lands,
+# and the two npm-based tasks below would abort the whole check-mode run.
+# Probe first and preview instead of invoking npm when it's not really
+# there. Confirmed against a fresh debian:trixie container while verifying
+# this role (#41).
+- name: Check whether npm is available
+  ansible.builtin.command: sh -c 'command -v npm'
+  register: _packages_npm_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['os_family'] != 'Windows'
+
+- name: Preview the GitHub Copilot CLI / Kilo Code CLI installs (check mode, npm not yet available)
+  ansible.builtin.debug:
+    msg: >-
+      would ensure @github/copilot@{{ packages_copilot_cli_version }} and
+      @kilocode/cli@{{ packages_kilo_cli_version }} are installed (npm
+      global) once nodejs/npm from packages/apt.txt is actually installed
+  when:
+    - ansible_facts['os_family'] != 'Windows'
+    - ansible_check_mode
+    - _packages_npm_present.rc != 0
 
 - name: Ensure GitHub Copilot CLI is installed (npm global, pinned)
   community.general.npm:
@@ -35,3 +75,43 @@
     version: "{{ packages_copilot_cli_version }}"
     global: true
     state: present
+  when:
+    - ansible_facts['os_family'] != 'Windows'
+    - not (ansible_check_mode and _packages_npm_present.rc != 0)
+
+- name: Ensure Kilo Code CLI is installed (npm global, pinned)
+  community.general.npm:
+    name: "@kilocode/cli"
+    version: "{{ packages_kilo_cli_version }}"
+    global: true
+    state: present
+  when:
+    - ansible_facts['os_family'] != 'Windows'
+    - not (ansible_check_mode and _packages_npm_present.rc != 0)
+
+- name: Check whether rtk is already on PATH
+  ansible.builtin.command: sh -c 'command -v rtk'
+  environment:
+    PATH: "{{ packages_search_path }}"
+  register: _packages_rtk_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['os_family'] != 'Windows'
+
+- name: Install rtk (pinned installer commit + checksum-verified release binary)
+  # Download then run (not `curl | sh`): a failed download must not leave an
+  # empty stdin that `sh` exits 0 on, reporting a phantom success -- same
+  # rationale as legacy/provision_legacy.py's rtk install block.
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    _t=$(mktemp) &&
+    curl -fsSL {{ packages_rtk_installer_url | quote }} -o "$_t" &&
+    RTK_VERSION={{ packages_rtk_version | quote }} sh "$_t";
+    _rc=$?; rm -f "$_t"; exit $_rc
+  args:
+    executable: /bin/bash
+  when:
+    - ansible_facts['os_family'] != 'Windows'
+    - _packages_rtk_present.rc != 0
+  changed_when: true

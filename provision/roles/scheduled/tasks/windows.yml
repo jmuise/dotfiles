@@ -1,0 +1,75 @@
+---
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  WRITTEN BUT UNVERIFIED ON WINDOWS.                                      │
+# │  No Windows host was reachable from the environment this role was       │
+# │  written in, and enabling WinRM/PSRP on this host's Windows side to     │
+# │  test it against was explicitly out of scope for this change (see the   │
+# │  PR description). This file has never executed. Do not treat it as      │
+# │  tested -- the first person to run `site.yml --check --diff` for real   │
+# │  against a Windows host should report back before it is trusted. See    │
+# │  also the retirement-verification issue linked from the PR.             │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# `community.windows.win_scheduled_task` / `ansible.windows.win_shell` need a
+# connection to the Windows host to apply anything -- WinRM or PSRP, neither
+# of which this inventory (provision/inventory/hosts.yml: a single
+# `localhost` / connection=local host) configures, and this change
+# deliberately does not add one. See README.md's "Upstream-contribution
+# candidates" for the local-Windows-management ergonomics gap this runs
+# into -- there is no analogue of `connection: local` for Windows modules,
+# so managing the Windows box Ansible itself happens to be running on means
+# opening a listener for no security benefit.
+#
+# Everything below is additionally guarded on `scheduled_windows_dotfiles_dir`
+# being set (empty by default -- see defaults/main.yml) so an unconfigured
+# host skips rather than schedules a task pointing at "".
+#
+# This orchestrates, it does not re-implement: the git-plumbing and winget
+# logic all live in packages/winget-check-updates.ps1 / winget-lock.ps1 /
+# winget-apply.ps1, untouched by this PR (additive only, see the retirement
+# table in the PR description).
+
+- name: Ensure the weekly winget-check-updates Scheduled Task exists
+  community.windows.win_scheduled_task:
+    name: "{{ scheduled_windows_winget_check_task_name }}"
+    description: "{{ scheduled_windows_winget_check_description }}"
+    actions:
+      - path: pwsh.exe
+        arguments: >-
+          -NoLogo -NoProfile -File
+          "{{ scheduled_windows_dotfiles_dir }}\packages\winget-check-updates.ps1"
+    triggers:
+      - type: weekly
+        start_boundary: "{{ scheduled_windows_winget_check_start_boundary }}"
+        days_of_week: "{{ scheduled_windows_winget_check_days_of_week }}"
+    username: "{{ scheduled_windows_winget_check_username }}"
+    logon_type: s4u
+    run_level: limited
+    state: present
+    enabled: true
+  when: scheduled_windows_dotfiles_dir | length > 0
+
+# The lockfile "loop" (check -> lock -> apply) becomes an Ansible run for the
+# two steps that mutate installed packages and are meant to be human-reviewed
+# rather than unattended-safe, so neither is scheduled. Both carry the
+# special `never` tag (Ansible: only runs when that tag is named explicitly),
+# so `ansible-playbook site.yml --tags scheduled_winget_lock` /
+# `--tags scheduled_winget_apply` runs one on demand, logged through Ansible,
+# in place of double-clicking the .ps1 by hand -- neither ever runs on a
+# plain `ansible-playbook site.yml` or `site.yml --tags scheduled`.
+
+- name: Refresh packages/winget.lock.json from installed versions (winget-lock.ps1)
+  ansible.windows.win_shell: >-
+    pwsh.exe -NoLogo -NoProfile -File
+    "{{ scheduled_windows_dotfiles_dir }}\packages\winget-lock.ps1"
+  when: scheduled_windows_dotfiles_dir | length > 0
+  changed_when: true
+  tags: [never, scheduled_winget_lock]
+
+- name: Apply packages/winget.lock.json to this machine (winget-apply.ps1)
+  ansible.windows.win_shell: >-
+    pwsh.exe -NoLogo -NoProfile -File
+    "{{ scheduled_windows_dotfiles_dir }}\packages\winget-apply.ps1"
+  when: scheduled_windows_dotfiles_dir | length > 0
+  changed_when: true
+  tags: [never, scheduled_winget_apply]

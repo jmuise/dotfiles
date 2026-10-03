@@ -1,0 +1,82 @@
+---
+# Retires the binary-install portion of legacy/provision_legacy.py's
+# "neovim" section (#41). The config symlink itself stays in
+# install.py/dotfiles linking -- out of scope for this role. Debian-family
+# only -- macOS gets neovim from the Brewfile (see tasks/homebrew.yml).
+#
+# Version is unpinned upstream (always the latest GitHub release), same as
+# legacy; only installed when absent -- the same gate legacy used.
+
+- name: Check whether nvim is already on PATH
+  ansible.builtin.command: sh -c 'command -v nvim'
+  environment:
+    PATH: "{{ packages_search_path }}"
+  register: _packages_nvim_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Skipped outright under --check rather than letting the real steps run
+# through: ansible.builtin.tempfile and ansible.builtin.unarchive both only
+# partially support check mode (tempfile registers no `path` at all under
+# --check; unarchive still hard-validates that `dest` exists for real even
+# in check mode) -- chasing that with per-task check_mode:false overrides
+# either aborts `--check --diff` outright or starts making real filesystem
+# changes during what's supposed to be a dry run. A single debug preview
+# below is the honest equivalent of legacy's own `if DRY_RUN: print(...)`
+# branch for this same install. Confirmed against a fresh debian:trixie
+# container while verifying this role (#41).
+- name: Preview the neovim install (check mode)
+  ansible.builtin.debug:
+    msg: "would install neovim to ~/.local (GitHub releases tarball)"
+  when:
+    - _packages_nvim_present.rc != 0
+    - ansible_check_mode
+
+- name: Install neovim (latest GitHub release, unpinned upstream)
+  when:
+    - _packages_nvim_present.rc != 0
+    - not ansible_check_mode
+  block:
+    - name: Map machine architecture to neovim's release naming scheme
+      ansible.builtin.set_fact:
+        _packages_nvim_arch: "{{ 'x86_64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
+
+    - name: Create a temp file for the neovim download
+      ansible.builtin.tempfile:
+        state: file
+        suffix: nvim.tar.gz
+      register: _packages_nvim_tmp
+
+    - name: Download the neovim release tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-{{ _packages_nvim_arch }}.tar.gz"
+        dest: "{{ _packages_nvim_tmp.path }}"
+        mode: "0644"
+        # force: true is load-bearing, not cosmetic. The tempfile task above
+        # already created dest as an empty file; without force, get_url does
+        # a conditional GET (If-Modified-Since keyed on dest's mtime, which
+        # is "now"), GitHub answers 304 Not Modified, and the module reports
+        # "ok" while leaving a 0-byte file behind -- unarchive then fails on
+        # an invalid/empty archive. Confirmed by a real run against a fresh
+        # debian:trixie container while verifying this role (#41).
+        force: true
+
+    - name: Ensure ~/.local exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.local"
+        state: directory
+        mode: "0755"
+
+    - name: Extract neovim into ~/.local (strip the top-level release directory)
+      ansible.builtin.unarchive:
+        src: "{{ _packages_nvim_tmp.path }}"
+        dest: "{{ ansible_env.HOME }}/.local"
+        remote_src: true
+        extra_opts:
+          - "--strip-components=1"
+
+    - name: Remove the temp download
+      ansible.builtin.file:
+        path: "{{ _packages_nvim_tmp.path }}"
+        state: absent

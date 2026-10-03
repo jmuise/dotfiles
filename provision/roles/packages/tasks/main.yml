@@ -16,13 +16,55 @@
   when: ansible_facts['os_family'] == 'Debian'
   tags: [packages]
 
+# #67: apt doesn't ship git-delta on bookworm. Runs right after apt.yml,
+# which sets packages_delta_apt_available from its availability probe. Also
+# covers the #41-tagged "ensure-delta.sh" portion of legacy's devcontainer
+# extras -- see tasks/delta.yml's header comment.
+- name: Ensure git-delta is available even when apt doesn't ship it (#67)
+  ansible.builtin.import_tasks: delta.yml
+  when: ansible_facts['os_family'] == 'Debian'
+  tags: [packages]
+
+# Debian-family binary installs not covered by apt.txt (#41). macOS gets the
+# same four tools from the Brewfile instead -- see tasks/homebrew.yml.
+- name: Install starship (Debian family; macOS via Brewfile)
+  ansible.builtin.import_tasks: starship.yml
+  when: ansible_facts['os_family'] == 'Debian'
+  tags: [packages]
+
+- name: Install neovim (Debian family; macOS via Brewfile)
+  ansible.builtin.import_tasks: neovim.yml
+  when: ansible_facts['os_family'] == 'Debian'
+  tags: [packages]
+
+- name: Install lazygit (Debian family; macOS via Brewfile)
+  ansible.builtin.import_tasks: lazygit.yml
+  when: ansible_facts['os_family'] == 'Debian'
+  tags: [packages]
+
+- name: Install yazi (Debian family; macOS via Brewfile)
+  ansible.builtin.import_tasks: yazi.yml
+  when: ansible_facts['os_family'] == 'Debian'
+  tags: [packages]
+
+# Dev tooling, not an AI CLI -- not profile-gated (#41). Not installed on
+# native Windows (forwarded into WSL instead; see tasks/devcontainer_cli.yml).
+- name: Install the devcontainer CLI
+  ansible.builtin.import_tasks: devcontainer_cli.yml
+  when: ansible_facts['os_family'] != 'Windows'
+  tags: [packages]
+
 - name: Install Homebrew packages (macOS)
   ansible.builtin.import_tasks: homebrew.yml
   when: ansible_facts['os_family'] == 'Darwin'
   tags: [packages]
 
-# winget / Windows is Phase 3. packages/winget.txt is intentionally left
-# unconsumed here; see roles/packages/README.md.
+# Windows: winget (system-level) + Scoop (developer tools), #41. See
+# tasks/windows.yml's header -- UNVERIFIED, no Windows host reachable.
+- name: Install Windows packages (winget + Scoop)
+  ansible.builtin.import_tasks: windows.yml
+  when: ansible_facts['os_family'] == 'Windows'
+  tags: [packages]
 
 - name: Install profile-gated AI CLIs
   ansible.builtin.import_tasks: ai_clis.yml

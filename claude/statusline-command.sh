@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Claude Code status line script
 
+# jq lives in ~/.local/bin in devcontainers (tools/ensure-jq.sh); fall back to it.
+[ -n "${HOME:-}" ] && PATH="$PATH:$HOME/.local/bin"
+
 input=$(cat)
 
 cwd=$(echo "$input" | jq -r '.cwd // .workspace.current_dir // ""')

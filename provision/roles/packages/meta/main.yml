@@ -15,11 +15,18 @@ galaxy_info:
       versions: [all]
     - name: MacOSX
       versions: [all]
+    - name: Windows
+      versions: [all]
 
-# community.general provides the homebrew* modules used by the macOS branch.
-# It ships with the `ansible` package (pipx install --include-deps ansible);
-# listed here so `ansible-galaxy role install` / lint knows about it.
+# community.general provides the homebrew* modules (macOS) and the npm
+# module (AI CLIs, devcontainer CLI). ansible.windows / community.windows
+# provide win_command and win_scoop/win_scoop_bucket (Windows branch, #41).
+# All three ship with the `ansible` package (pipx install --include-deps
+# ansible); listed here so `ansible-galaxy role install` / lint knows about
+# them.
 collections:
   - community.general
+  - ansible.windows
+  - community.windows
 
 dependencies: []

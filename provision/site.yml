@@ -120,6 +120,8 @@
       tags: [wsl]
     - role: secrets
       tags: [secrets]
+    - role: scheduled
+      tags: [scheduled]
     # macOS system defaults (Finder/Dock/keyboard/trackpad/screenshots/
     # Safari/Activity Monitor), converted from macos/defaults.sh (#42).
     # UNVERIFIED ON macOS -- see roles/macos/README.md. Gated on os_family

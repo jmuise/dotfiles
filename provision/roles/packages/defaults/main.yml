@@ -4,14 +4,31 @@
 # already live at the repo root and that install.py / install.ps1 consume
 # today, so there is exactly one place to edit a package.
 #
-#   packages/apt.txt   -> Debian/Ubuntu (apt)          [verified on WSL]
-#   packages/Brewfile  -> macOS (Homebrew)             [written, UNVERIFIED]
-#   packages/winget.txt -> Windows (winget)            [Phase 3, not built]
+#   packages/apt.txt    -> Debian/Ubuntu (apt)          [verified: real run + idempotent rerun, trixie & bookworm]
+#   packages/Brewfile   -> macOS (Homebrew)             [written, UNVERIFIED -- no Mac reachable]
+#   packages/scoop.txt  -> Windows (Scoop)              [written, UNVERIFIED -- no Windows host reachable]
+#   packages/winget.txt -> Windows (winget)             [written, UNVERIFIED -- no Windows host reachable]
 #
 # playbook_dir is .../provision, so the repo root is one level up.
 packages_repo_root: "{{ playbook_dir }}/.."
 packages_apt_manifest: "{{ packages_repo_root }}/packages/apt.txt"
 packages_brewfile: "{{ packages_repo_root }}/packages/Brewfile"
+packages_scoop_manifest: "{{ packages_repo_root }}/packages/scoop.txt"
+packages_winget_manifest: "{{ packages_repo_root }}/packages/winget.txt"
+
+# ── PATH for presence checks ─────────────────────────────────────────────────
+# `ansible_connection: local` inherits whatever PATH the process invoking
+# ansible-playbook had -- which, critically, is NOT a login shell's PATH, so
+# it does NOT include ~/.local/bin even though shell/exports.sh puts it there
+# for every real interactive shell. Every `command -v <tool>` presence probe
+# below for a tool this role installs into ~/.local/bin (starship, neovim,
+# lazygit, yazi, Claude Code, rtk) must extend PATH explicitly with this, or
+# the probe reports "absent" forever and the tool is redownloaded and
+# reinstalled on every single run, real or --check. Caught by this PR's
+# mandated idempotent-rerun verification (#41) -- the first rerun without
+# this fix showed changed=16 instead of changed=0.
+packages_local_bin: "{{ ansible_env.HOME }}/.local/bin"
+packages_search_path: "{{ ansible_env.PATH }}:{{ packages_local_bin }}"
 
 # ── apt behaviour ────────────────────────────────────────────────────────────
 # Real provisioning runs need root to install and to refresh the apt cache.
@@ -28,10 +45,53 @@ packages_apt_cache_valid_time: 3600
 # intentional and permanent.
 packages_apt_exclude: []
 
-# ── AI CLI pins ──────────────────────────────────────────────────────────────
-# Kept in lockstep with the constants at the top of install.py.
+# ── AI CLI + dev-tool pins ───────────────────────────────────────────────────
+# These four constants (packages_copilot_cli_version, packages_kilo_cli_version,
+# packages_devcontainers_cli_version, packages_rtk_version /
+# packages_rtk_installer_sha) are lifted verbatim from
+# legacy/provision_legacy.py's KILO_CLI_VERSION / COPILOT_CLI_VERSION /
+# DEVCONTAINERS_CLI_VERSION / RTK_VERSION / RTK_INSTALLER_SHA constants (#41).
+#
+# THIS FILE IS NOW THE SINGLE SOURCE OF TRUTH for these pins going forward --
+# legacy/provision_legacy.py's copies are kept only until that module retires
+# (its own docstring gates that on verified parity, not on this PR landing).
+# Bump here first, then mirror the same values into legacy's constants so the
+# two paths can't silently drift apart while both are alive.
 packages_copilot_cli_version: "1.0.80"
+packages_kilo_cli_version: "7.4.22"
+packages_devcontainers_cli_version: "0.89.0"
 
-# Claude Code has no pinned version in install.py (it self-updates from the
+# rtk (Rust Token Killer) — installed from the project's own release script.
+# Trust model, strongest link first (mirrors legacy/provision_legacy.py's
+# RTK_VERSION/RTK_INSTALLER_SHA comment block verbatim):
+#   * packages_rtk_installer_sha pins install.sh to an immutable commit (a git
+#     *tag* like v0.47.0 is mutable and re-resolved on every fetch — a moved
+#     tag would feed arbitrary script straight into `sh`). Reviewed
+#     install.sh sha256:
+#     d6eb73a772903e13ff34ee1be8a8b24e896ba9a978f20d2279a08b4083ea6f77
+#   * That pinned script downloads the rtk binary tarball for
+#     packages_rtk_version and verifies it against the release's
+#     checksums.txt before extracting.
+#   * Residual risk: a compromised release could ship a matching tarball +
+#     checksums. Accepted here — already stricter than the repo's other
+#     `curl | sh` installs (starship, Claude Code), which pin nothing.
+# Bump both together: pick the `vX.Y.Z` stable tag from
+# https://github.com/rtk-ai/rtk/releases/latest (not a `dev-*-rc`
+# pre-release), set packages_rtk_installer_sha to the commit it points at.
+packages_rtk_version: "v0.47.0"
+packages_rtk_installer_sha: "34fe2553192aef5f6ca19944cb52a272a5294c27"
+packages_rtk_installer_url: "https://raw.githubusercontent.com/rtk-ai/rtk/{{ packages_rtk_installer_sha }}/install.sh"
+
+# Claude Code has no pinned version in legacy (it self-updates from the
 # tarball installer); the role only ensures it is present.
 packages_claude_installer_url: "https://claude.ai/install.sh"
+
+# ── delta bookworm fallback (#67) ────────────────────────────────────────────
+# git-delta is not apt-installable on Debian 12 (bookworm) -- see tasks/delta.yml.
+# Pins mirror git/ensure-delta.sh's DELTA_VERSION/DELTA_SHA256_* verbatim; that
+# script's own devcontainer-specific need for this same fallback is folded
+# into tasks/delta.yml too (see its header comment). Bump here first, then
+# mirror into git/ensure-delta.sh until that script retires alongside it.
+packages_delta_version: "0.19.2"
+packages_delta_sha256_x86_64: "8e695c5f586a8c53d6c3b01be0b4a422ed218bfed2a56191caebe373a1c18ab2"
+packages_delta_sha256_arm64: "0bfce159a5cddd5feb3d6db4a616d883ff51253ce08ac7ec11cb1d208cfaab9e"
