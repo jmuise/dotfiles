@@ -118,6 +118,8 @@
       tags: [packages]
     - role: wsl
       tags: [wsl]
+    - role: secrets
+      tags: [secrets]
     - role: scheduled
       tags: [scheduled]
     # macOS system defaults (Finder/Dock/keyboard/trackpad/screenshots/
