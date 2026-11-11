@@ -90,9 +90,54 @@ self_update() {
 }
 self_update
 
+# ── python3 bootstrap (devcontainers only) ────────────────────────────────────
+# install.py needs python3, and some devcontainer base images
+# (e.g. mcr.microsoft.com/devcontainers/base:bookworm) ship without it. When
+# VS Code runs this as dotfiles.installCommand there is nobody to fix that by
+# hand, so in a container — same signals as install.py's is_devcontainer() —
+# install the distro's python3 with apt-get. A distro package rather than a
+# pinned download, so it keeps receiving Debian security updates.
+# Never on a host (hosts get python3 from packages/apt.txt / bootstrap.sh), and
+# never with a password prompt: root, or passwordless `sudo -n`, or nothing.
+is_container() {
+  [[ -n "${REMOTE_CONTAINERS:-}" || -n "${CODESPACES:-}" || -n "${DEVCONTAINER:-}" || -e /.dockerenv ]]
+}
+
+PYTHON3_DRY_RUN_PENDING=0
+ensure_python3() {
+  command -v python3 >/dev/null 2>&1 && return 0
+  is_container || return 0
+  command -v apt-get >/dev/null 2>&1 || return 0
+
+  local -a priv=()
+  if [[ "$(id -u)" != "0" ]]; then
+    command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1 || return 0
+    priv=(sudo -n)
+  fi
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "  ${priv[*]:+${priv[*]} }apt-get update && ${priv[*]:+${priv[*]} }apt-get install -y --no-install-recommends python3" >&2
+    PYTHON3_DRY_RUN_PENDING=1
+    return 0
+  fi
+
+  echo "install.sh: python3 not found — installing it with apt-get" >&2
+  "${priv[@]}" env DEBIAN_FRONTEND=noninteractive apt-get update \
+    && "${priv[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 \
+    || echo "install.sh: apt-get could not install python3" >&2
+  return 0
+}
+ensure_python3
+
 PY=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
 if [[ -z "$PY" ]]; then
+  if [[ "$PYTHON3_DRY_RUN_PENDING" == "1" ]]; then
+    # Dry run: python3 would have been installed above; nothing to preview with.
+    echo "install.sh: dry run — python3 not installed, so install.py's preview is skipped" >&2
+    exit 0
+  fi
   echo "python3 not found — install Python 3 and retry" >&2
+  echo "  remedy: run 'sudo apt-get install python3' (or add python3 to the container image) and rerun; on a host, run bootstrap/bootstrap.sh" >&2
   exit 1
 fi
 
