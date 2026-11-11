@@ -69,6 +69,9 @@ jobs:
       - name: python3 tests/test_ensure_jq.py (issue #88 jq guard message + ensure-jq.sh)
         run: python3 tests/test_ensure_jq.py -v
 
+      - name: python3 tests/test_install_sh_python3.py (install.sh python3 bootstrap in devcontainers)
+        run: python3 tests/test_install_sh_python3.py -v
+
       - name: bash -n on every tracked shell script
         run: |
           set -uo pipefail
